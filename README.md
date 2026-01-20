@@ -155,3 +155,7 @@ Impacted by AI (Inline + Agentic)
 
 - VS Code 1.85 or later
 - Git installed and repository initialized
+
+## Core Team
+
+AI Contribution Tracker is a collaboration project by [David Exterman](https://www.linkedin.com/in/david-exterman-a755a7123/) and [Yoav Lax](https://www.linkedin.com/in/yoav-lax-2127b9189/).
