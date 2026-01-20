@@ -1,4 +1,4 @@
-# AI Commit Tracker
+# AI Contribution Tracker
 
 A developer productivity tool that provides insights into how you interact with AI coding assistants.
 

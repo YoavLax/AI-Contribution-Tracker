@@ -1,9 +1,34 @@
 {
-  "name": "ai-commit-tracker",
-  "displayName": "AI Commit Tracker",
+  "name": "ai-contribution-tracker",
+  "displayName": "AI Contribution Tracker",
   "publisher": "YoavLax",
   "description": "Tracks AI coding assistant usage metrics",
-  "version": "0.0.1",
+  "version": "1.0.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YoavLax/AI-Contribution-Tracker"
+  },
+  "bugs": {
+    "url": "https://github.com/YoavLax/AI-Contribution-Tracker/issues"
+  },
+  "homepage": "https://github.com/YoavLax/AI-Contribution-Tracker#readme",
+  "keywords": [
+    "ai",
+    "copilot",
+    "github-copilot",
+    "git",
+    "commit",
+    "tracking",
+    "metrics",
+    "analytics",
+    "productivity",
+    "ai-assistant",
+    "code-generation",
+    "agentic-ai",
+    "developer-tools"
+  ],
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.108.0"
   },
@@ -11,12 +36,12 @@
     "Other"
   ],
   "activationEvents": [
-    "*"
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
-      "title": "AI Commit Tracker",
+      "title": "AI Contribution Tracker",
       "properties": {
         "copilotInsightTracker.captureMode": {
           "type": "boolean",
