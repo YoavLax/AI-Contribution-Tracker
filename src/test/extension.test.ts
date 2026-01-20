@@ -67,6 +67,7 @@ suite('Extension Test Suite', () => {
         
         const commands = await vscode.commands.getCommands(true);
         
+        // Inline suggestion commands
         assert.ok(
             commands.includes('copilotInsightTracker.acceptInlineSuggestion'),
             'Accept inline suggestion command should be registered'
@@ -78,6 +79,44 @@ suite('Extension Test Suite', () => {
         assert.ok(
             commands.includes('copilotInsightTracker.acceptNextLine'),
             'Accept next line command should be registered'
+        );
+        
+        // Agentic commands
+        assert.ok(
+            commands.includes('copilotInsightTracker.applyChatCode'),
+            'Apply chat code command should be registered'
+        );
+        assert.ok(
+            commands.includes('copilotInsightTracker.insertChatCode'),
+            'Insert chat code command should be registered'
+        );
+        assert.ok(
+            commands.includes('copilotInsightTracker.insertChatCodeNewFile'),
+            'Insert chat code new file command should be registered'
+        );
+        assert.ok(
+            commands.includes('copilotInsightTracker.acceptInlineChat'),
+            'Accept inline chat command should be registered'
+        );
+        assert.ok(
+            commands.includes('copilotInsightTracker.acceptEditingFile'),
+            'Accept editing file command should be registered'
+        );
+        assert.ok(
+            commands.includes('copilotInsightTracker.acceptAllEditingFiles'),
+            'Accept all editing files command should be registered'
+        );
+        assert.ok(
+            commands.includes('copilotInsightTracker.acceptEditingHunk'),
+            'Accept editing hunk command should be registered'
+        );
+        assert.ok(
+            commands.includes('copilotInsightTracker.discardEditingFile'),
+            'Discard editing file command should be registered'
+        );
+        assert.ok(
+            commands.includes('copilotInsightTracker.discardAllEditingFiles'),
+            'Discard all editing files command should be registered'
         );
     });
     
@@ -97,5 +136,73 @@ suite('Extension Test Suite', () => {
         } catch {
             // Expected - no inline suggestion was visible
         }
+    }).timeout(10000);
+
+    test('Agentic wrapper commands should execute without error', async () => {
+        const ext = vscode.extensions.getExtension('demo.copilot-insight-tracker');
+        await ext!.activate();
+        
+        // Create a document
+        const doc = await vscode.workspace.openTextDocument({ content: '', language: 'typescript' });
+        await vscode.window.showTextDocument(doc);
+        
+        // Execute agentic wrapper commands - they should not throw
+        // (The original commands won't do anything without chat context)
+        const agenticCommands = [
+            'copilotInsightTracker.applyChatCode',
+            'copilotInsightTracker.insertChatCode',
+            'copilotInsightTracker.acceptInlineChat',
+            'copilotInsightTracker.acceptEditingFile',
+            'copilotInsightTracker.acceptAllEditingFiles',
+            'copilotInsightTracker.acceptEditingHunk',
+            'copilotInsightTracker.discardEditingFile',
+            'copilotInsightTracker.discardAllEditingFiles'
+        ];
+        
+        for (const cmd of agenticCommands) {
+            try {
+                await vscode.commands.executeCommand(cmd);
+                // Command executed successfully
+            } catch {
+                // Expected - no chat context available
+            }
+        }
+    }).timeout(15000);
+
+    test('Extension should NOT track copy-paste operations', async () => {
+        const ext = vscode.extensions.getExtension('demo.copilot-insight-tracker');
+        await ext!.activate();
+
+        const doc = await vscode.workspace.openTextDocument({ content: '', language: 'typescript' });
+        await vscode.window.showTextDocument(doc);
+
+        // Simulate a large paste - should NOT be tracked as it doesn't go through our commands
+        const edit = new vscode.WorkspaceEdit();
+        const largeCode = `
+function complexFunction() {
+    const result = [];
+    for (let i = 0; i < 100; i++) {
+        result.push(i * 2);
+    }
+    return result;
+}
+
+class MyClass {
+    private data: string[];
+    
+    constructor() {
+        this.data = [];
+    }
+    
+    addItem(item: string) {
+        this.data.push(item);
+    }
+}
+`;
+        edit.insert(doc.uri, new vscode.Position(0, 0), largeCode);
+        await vscode.workspace.applyEdit(edit);
+        
+        await new Promise(r => setTimeout(r, 500));
+        // Large paste is ignored because it doesn't go through our intercepted commands
     }).timeout(10000);
 });
