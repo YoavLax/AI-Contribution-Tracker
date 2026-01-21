@@ -46,7 +46,7 @@ Instead of attempting to intercept commands, we analyze the **characteristics of
 | 12b | Sustained background (med) | +20 | 3-5 background changes in last 5 seconds |
 | 13a | Large background deletion | +25 | 50+ chars deleted in non-active document |
 | 13b | Large deletion (no typing) | +15 | 50+ chars deleted AND 2+ second typing gap |
-| 14 | Background replacement | +15 | 10+ chars inserted AND 10+ chars deleted in background |
+| 14 | Background replacement | +15 | 10+ chars total activity AND 10+ chars deleted in background |
 
 ### Signal Notes
 - **Paste detection (-50)** is deterministic via command interception, not heuristic
@@ -61,7 +61,6 @@ Instead of attempting to intercept commands, we analyze the **characteristics of
 
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
-| `copilotInsightTracker.trackAgenticEdits` | `true` | boolean | Enable/disable agentic detection |
 | `copilotInsightTracker.agenticConfidenceThreshold` | `70` | 50-100 | Minimum confidence % to mark as agentic |
 
 ### Threshold Guidelines
@@ -215,18 +214,17 @@ Using VS Code's rename symbol or find-replace across files may score as agentic.
 
 ## Changelog
 
-### v0.0.2 (Latest)
-- Added Signal 12: Sustained background activity (+20/+30)
-- Added Signal 13: Large deletion detection (+15/+25)
-- Added Signal 14: Background replacement detection (+15)
-- Changed `totalChars` to include both insertions AND deletions
-- Added paste command interception with -50 penalty
-- Fixed hook installation for custom `core.hooksPath`
-- Fixed highest score preservation (was using last score)
-- Added commit monitoring with detailed logging
-
-### v0.0.1
-- Initial confidence-based scoring system with 11 signals
+### v1.0.0 (Latest)
+- Initial stable release
+- 14-signal confidence-based scoring system
+- Signal 12: Sustained background activity (+20/+30)
+- Signal 13: Large deletion detection (+15/+25)
+- Signal 14: Background replacement detection (+15)
+- `totalChars` includes both insertions AND deletions
+- Paste command interception with -50 penalty
+- Custom `core.hooksPath` support for git hooks
+- Highest score preservation across editing session
+- Commit monitoring with detailed logging
 - Inline suggestion tracking (Tab, Ctrl+Right, Ctrl+Shift+Right)
 - Git hook installation and commit message tagging
 Currently focused on GitHub Copilot only. Support for other tools (Cursor, Cline, Continue) may be added in future versions.
