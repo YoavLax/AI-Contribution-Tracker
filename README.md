@@ -42,8 +42,6 @@ When an AI suggestion is confirmed:
 
 This extension contributes the following settings:
 
-* `copilotInsightTracker.captureMode`: Enable or disable all tracking functionality (default: `true`).
-* `copilotInsightTracker.trackAgenticEdits`: Enable or disable tracking of agentic AI edits (default: `true`).
 * `copilotInsightTracker.agenticConfidenceThreshold`: Minimum confidence percentage (50-100) to mark as agentic (default: `70`).
 
 ## Agentic Detection Signals

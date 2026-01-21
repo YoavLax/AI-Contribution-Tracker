@@ -44,10 +44,9 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(disposable);
     
-    // Explicitly check configuration
+    // Log configuration
     const config = vscode.workspace.getConfiguration('copilotInsightTracker');
-    logger.appendLine(`CONFIG: captureMode=${config.get('captureMode')}`);
-    logger.appendLine(`CONFIG: trackAgenticEdits=${config.get('trackAgenticEdits')}`);
+    logger.appendLine(`CONFIG: agenticConfidenceThreshold=${config.get('agenticConfidenceThreshold')}`);
     
     return { tracker };
 }

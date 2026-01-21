@@ -43,16 +43,6 @@
     "configuration": {
       "title": "AI Contribution Tracker",
       "properties": {
-        "copilotInsightTracker.captureMode": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable or disable capturing of code generation metrics."
-        },
-        "copilotInsightTracker.trackAgenticEdits": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable or disable tracking of agentic AI edits (Copilot Chat apply, inline chat, agent mode)."
-        },
         "copilotInsightTracker.agenticConfidenceThreshold": {
           "type": "number",
           "default": 70,

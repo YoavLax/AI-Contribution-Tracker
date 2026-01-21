@@ -54,8 +54,6 @@ const CHAT_EDITING_DISCARD_ALL = 'chatEditing.discardAllFiles';
 
 export class CopilotTracker implements vscode.Disposable {
     private disposables: vscode.Disposable[] = [];
-    private captureMode: boolean = true;
-    private trackAgenticEdits: boolean = true;
     private agenticConfidenceThreshold: number = 70;
     private logger: vscode.OutputChannel;
     private gitAPI: GitAPI | null = null;
@@ -86,8 +84,7 @@ export class CopilotTracker implements vscode.Disposable {
         
         this.disposables.push(
             vscode.workspace.onDidChangeConfiguration(e => {
-                if (e.affectsConfiguration('copilotInsightTracker.captureMode') ||
-                    e.affectsConfiguration('copilotInsightTracker.trackAgenticEdits')) {
+                if (e.affectsConfiguration('copilotInsightTracker.agenticConfidenceThreshold')) {
                     this.updateConfiguration();
                 }
             })
@@ -259,11 +256,6 @@ export class CopilotTracker implements vscode.Disposable {
         try {
             this.disposables.push(
                 vscode.commands.registerCommand(commandId, async (...args: unknown[]) => {
-                    if (!this.trackAgenticEdits) {
-                        // Just pass through
-                        await vscode.commands.executeCommand(originalCommand, ...args);
-                        return;
-                    }
                     this.logger.appendLine(`[Tracker] ▶ ${logLabel} intercepted`);
                     await this.handleAgenticAccept(agenticType, originalCommand, args);
                 })
@@ -335,10 +327,6 @@ export class CopilotTracker implements vscode.Disposable {
         // Listen for new file creation during editing sessions
         this.disposables.push(
             vscode.workspace.onDidCreateFiles(async (event) => {
-                if (!this.trackAgenticEdits || !this.captureMode) {
-                    return;
-                }
-                
                 // File creation without user action is strong signal of agentic behavior
                 // Score: Background creation (+30) + Pure creation (+15) = 45% base
                 // Add multi-file bonus if applicable
@@ -374,10 +362,6 @@ export class CopilotTracker implements vscode.Disposable {
         // Listen for file renames during editing sessions
         this.disposables.push(
             vscode.workspace.onDidRenameFiles(async (event) => {
-                if (!this.trackAgenticEdits || !this.captureMode) {
-                    return;
-                }
-                
                 // File rename is a moderate signal of agentic behavior
                 const now = Date.now();
                 for (const { oldUri, newUri } of event.files) {
@@ -419,10 +403,6 @@ export class CopilotTracker implements vscode.Disposable {
         // Monitor text document changes for Agent Mode detection
         this.disposables.push(
             vscode.workspace.onDidChangeTextDocument(async (event) => {
-                if (!this.trackAgenticEdits || !this.captureMode) {
-                    return;
-                }
-                
                 // Skip if we're already handling an inline suggestion
                 if (this._pendingAIAccept) {
                     return;
@@ -977,10 +957,8 @@ export class CopilotTracker implements vscode.Disposable {
 
     private updateConfiguration(): void {
         const config = vscode.workspace.getConfiguration('copilotInsightTracker');
-        this.captureMode = config.get<boolean>('captureMode', true);
-        this.trackAgenticEdits = config.get<boolean>('trackAgenticEdits', true);
         this.agenticConfidenceThreshold = config.get<number>('agenticConfidenceThreshold', 70);
-        this.logger.appendLine(`[Tracker] Config: captureMode=${this.captureMode}, trackAgenticEdits=${this.trackAgenticEdits}, threshold=${this.agenticConfidenceThreshold}%`);
+        this.logger.appendLine(`[Tracker] Config: threshold=${this.agenticConfidenceThreshold}%`);
     }
 
     /**
@@ -990,10 +968,6 @@ export class CopilotTracker implements vscode.Disposable {
      * 1. Our intercepted inline accept command set _pendingAIAccept = true
      */
     public async onDocumentChange(event: vscode.TextDocumentChangeEvent): Promise<void> {
-        if (!this.captureMode) {
-            return;
-        }
-
         // Skip undo/redo
         if (event.reason === vscode.TextDocumentChangeReason.Undo || 
             event.reason === vscode.TextDocumentChangeReason.Redo) {
