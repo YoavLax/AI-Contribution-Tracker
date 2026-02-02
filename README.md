@@ -11,23 +11,28 @@
 [![GitHub Stars](https://img.shields.io/github/stars/YoavLax/AI-Contribution-Tracker?style=flat-square)](https://github.com/YoavLax/AI-Contribution-Tracker/stargazers)
 [![Issues](https://img.shields.io/github/issues/YoavLax/AI-Contribution-Tracker?style=flat-square)](https://github.com/YoavLax/AI-Contribution-Tracker/issues)
 
-[📦 Install](https://marketplace.visualstudio.com/items?itemName=YoavLax.ai-contribution-tracker) · [📖 Documentation](#how-it-works) · [🐛 Report Bug](https://github.com/YoavLax/AI-Contribution-Tracker/issues/new) · [💡 Request Feature](https://github.com/YoavLax/AI-Contribution-Tracker/issues/new)
-
+[📦 Install](https://marketplace.visualstudio.com/items?itemName=YoavLax.ai-contribution-tracker) · [📖 Documentation](#how-it-works) · [🐛 Report Bug](https://github.com/YoavLax/AI-Contribution-Tracker/issues/new) · [💡 Request Feature](https://github.com/YoavLax/AI-Contribution-Tracker/issues/new) · [📊 Platform Dashboard](https://github.com/Varonis-Systems/AI-Contribution-Tracker-Platform)
 
 </div>
 
 ---
 
-A developer productivity tool that provides insights into how you interact with AI coding assistants.
+A VS Code extension that automatically detects and tracks AI-generated code contributions. The extension tags commits with AI markers, enabling accurate measurement of AI coding assistant usage across repositories.
 
-## How it Works
+> **📊 Looking for analytics?** Check out the [AI Contribution Tracker Platform](https://github.com/Varonis-Systems/AI-Contribution-Tracker-Platform) - a complete analytics suite with dashboards, GitHub sync, and team insights.
 
-The extension automatically detects when you accept AI-generated code. It supports both **Inline Suggestions** (ghost text) with deterministic detection, and **Agentic AI** interactions (Copilot Chat, Inline Chat, Agent Mode) with confidence-based detection.
+## How It Works
 
-When an AI suggestion is confirmed:
-1.  **Detection**: For inline suggestions, the extension intercepts the Tab key. For agentic AI, it uses a multi-signal confidence scoring system.
-2.  **Tracking**: It sets a temporary flag in your local git repository.
-3.  **Git Integration**: A custom `commit-msg` hook is automatically installed in your repository. When you commit your changes, this hook checks for the flag and appends an "Impacted by AI" footer to your commit message.
+The extension automatically detects when you accept AI-generated code and tags your commits accordingly. It supports both **Inline Suggestions** (ghost text) with deterministic detection, and **Agentic AI** interactions (Copilot Chat, Inline Chat, Agent Mode) with confidence-based detection.
+
+### Global Git Hooks
+
+The extension uses **global git hooks** that work across all your repositories:
+1. On first activation, the extension creates a global hooks directory in your VS Code storage
+2. Configures git to use this directory with `git config --global core.hooksPath`
+3. The `commit-msg` hook automatically appends "Impacted by AI" markers to commits when AI code is detected
+
+This approach means you only need to install the extension once, and it will track AI contributions in every repository you work on.
 
 ## Features
 
@@ -136,18 +141,16 @@ Impacted by AI (Inline + Agentic)
 
 ## How It Works (Technical)
 
-### Change Tracking
-- **totalChars**: Tracks both insertions AND deletions (total activity)
-- **Background detection**: Changes to non-active documents score higher
-- **Sustained activity**: Consecutive background changes within 5 seconds aggregate
+### Detection Process
+1. **Inline Suggestions**: Deterministic tracking via keyboard shortcuts (Tab, Ctrl+Right, Ctrl+Shift+Right)
+2. **Agentic AI**: Multi-signal confidence scoring system with 14+ signals
+3. **Tracking**: Sets a temporary flag in the git repository when AI code is detected
+4. **Commit Tagging**: Global git hook checks the flag and appends markers to commit messages
 
-### Score Preservation
-- The **highest confidence score** in a session is preserved for commit tagging
-- Sessions reset after 30 seconds of inactivity or after a commit
-
-### Custom Git Hooks Path
-- Automatically detects `git config core.hooksPath` setting
-- Installs hook in the correct location (global or local)
+### Global Hook Installation
+- Extension creates hooks directory in VS Code's global storage on first activation
+- Runs `git config --global core.hooksPath` to apply hooks to all repositories
+- No per-repository configuration needed
 
 ## Requirements
 
