@@ -28,6 +28,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Setup global git hooks
     setupGlobalGitHooks(context);
     
+    // Setup Copilot agent hooks
+    setupCopilotHooks(context);
+    
     let tracker: CopilotTracker | undefined;
 
     try {
@@ -45,10 +48,6 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
 	context.subscriptions.push(disposable);
-    
-    // Log configuration
-    const config = vscode.workspace.getConfiguration('copilotInsightTracker');
-    logger.appendLine(`CONFIG: agenticConfidenceThreshold=${config.get('agenticConfidenceThreshold')}`);
     
     return { tracker };
 }
@@ -74,17 +73,23 @@ function setupGlobalGitHooks(context: vscode.ExtensionContext): void {
 # This hook runs globally for all repositories
 
 IMPACT_FLAG=$(git rev-parse --git-path AI_IMPACT_PENDING)
+STATE_FILE=$(git rev-parse --git-path ai-tracker-state.json)
 
 if [ -f "$IMPACT_FLAG" ]; then
     MARKER=$(cat "$IMPACT_FLAG")
     if [ -z "$MARKER" ]; then
         MARKER="Impacted by AI"
     fi
-    if ! grep -q "$MARKER" "$1"; then
+    if ! grep -qF "$MARKER" "$1"; then
         echo "" >> "$1"
         echo "$MARKER" >> "$1"
     fi
     rm "$IMPACT_FLAG"
+fi
+
+# Clean up accumulated hook state after commit
+if [ -f "$STATE_FILE" ]; then
+    rm "$STATE_FILE"
 fi
 `.replace(/\r\n/g, '\n');
 
@@ -146,6 +151,88 @@ fi
                 logger.show();
             }
         });
+    }
+}
+
+/**
+ * Setup Copilot agent hooks globally (~/.copilot/hooks/)
+ * These hooks fire during agent sessions to track prompts, agents, and models.
+ */
+function setupCopilotHooks(context: vscode.ExtensionContext): void {
+    try {
+        // Copy hook-handler.js to a stable location in global storage
+        const hookHandlerDir = path.join(context.globalStorageUri.fsPath, 'copilot-hooks');
+        if (!fs.existsSync(hookHandlerDir)) {
+            fs.mkdirSync(hookHandlerDir, { recursive: true });
+        }
+
+        const bundledHandler = path.join(context.extensionPath, 'dist', 'hook-handler.js');
+        const installedHandler = path.join(hookHandlerDir, 'hook-handler.js');
+
+        if (fs.existsSync(bundledHandler)) {
+            fs.copyFileSync(bundledHandler, installedHandler);
+            logger.appendLine(`[Setup] Copied hook-handler.js to: ${installedHandler}`);
+        } else {
+            logger.appendLine(`[Setup] WARNING: hook-handler.js not found at: ${bundledHandler}`);
+            return;
+        }
+
+        // Create hook config pointing to the installed handler
+        const userHome = os.homedir();
+        const copilotHooksDir = path.join(userHome, '.copilot', 'hooks');
+        if (!fs.existsSync(copilotHooksDir)) {
+            fs.mkdirSync(copilotHooksDir, { recursive: true });
+        }
+
+        // Build the command string
+        // Note: process.execPath is the Electron binary, not Node.js.
+        // Use 'node' from PATH which is available on developer machines.
+        const handlerPathPosix = installedHandler.replace(/\\/g, '/');
+        const defaultCommand = `node "${handlerPathPosix}"`;
+        const windowsCommand = `node "${installedHandler}"`;
+
+        const hookConfig = {
+            hooks: {
+                SessionStart: [{
+                    type: 'command',
+                    command: defaultCommand,
+                    windows: windowsCommand,
+                    timeout: 10
+                }],
+                UserPromptSubmit: [{
+                    type: 'command',
+                    command: defaultCommand,
+                    windows: windowsCommand,
+                    timeout: 10
+                }],
+                SubagentStart: [{
+                    type: 'command',
+                    command: defaultCommand,
+                    windows: windowsCommand,
+                    timeout: 10
+                }],
+                SubagentStop: [{
+                    type: 'command',
+                    command: defaultCommand,
+                    windows: windowsCommand,
+                    timeout: 10
+                }],
+                Stop: [{
+                    type: 'command',
+                    command: defaultCommand,
+                    windows: windowsCommand,
+                    timeout: 15
+                }]
+            }
+        };
+
+        const configPath = path.join(copilotHooksDir, 'ai-commit-tracker.json');
+        fs.writeFileSync(configPath, JSON.stringify(hookConfig, null, 2));
+        logger.appendLine(`[Setup] ✓ Copilot hooks config written: ${configPath}`);
+        logger.appendLine(`[Setup] Tracking events: SessionStart, UserPromptSubmit, SubagentStart, SubagentStop, Stop`);
+
+    } catch (error) {
+        logger.appendLine(`[Setup] ERROR setting up Copilot hooks: ${error}`);
     }
 }
 

@@ -188,7 +188,8 @@ suite('Git Integration Tests (Deterministic Only)', function () {
         
         assert.ok(fs.existsSync(flagFile), 'AI acceptance should create pending flag');
         const flagContent = fs.readFileSync(flagFile, 'utf-8');
-        assert.ok(flagContent.includes('Impacted by AI'), 'Flag content should match');
+        assert.ok(flagContent.includes('Impacted by AI'), 'Flag content should contain marker');
+        assert.ok(flagContent.includes('Inline'), 'Flag content should contain Inline marker');
         
         // Check Commit Message
         runGit(['add', '.'], repoRoot);

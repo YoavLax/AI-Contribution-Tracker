@@ -3,7 +3,11 @@
   "displayName": "AI Contribution Tracker",
   "publisher": "YoavLax",
   "description": "Tracks AI coding assistant usage metrics",
-  "version": "1.0.0",
+  "version": "1.0.6",
+  "contributors": [
+    "Yoav Lax",
+    "David Exterman"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -30,7 +34,7 @@
   ],
   "icon": "icon.png",
   "engines": {
-    "vscode": "^1.108.0"
+    "vscode": "^1.100.0"
   },
   "categories": [
     "Other"
@@ -40,18 +44,6 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
-    "configuration": {
-      "title": "AI Contribution Tracker",
-      "properties": {
-        "copilotInsightTracker.agenticConfidenceThreshold": {
-          "type": "number",
-          "default": 70,
-          "minimum": 50,
-          "maximum": 100,
-          "description": "Minimum confidence percentage (50-100) required to mark a change as AI-generated (Agentic). Higher values reduce false positives."
-        }
-      }
-    },
     "commands": [
       {
         "command": "copilot-insight-tracker.helloWorld",
@@ -68,46 +60,6 @@
       {
         "command": "copilotInsightTracker.acceptNextLine",
         "title": "Accept Next Line of Inline Suggestion (Tracked)"
-      },
-      {
-        "command": "copilotInsightTracker.applyChatCode",
-        "title": "Apply Chat Code in Editor (Tracked)"
-      },
-      {
-        "command": "copilotInsightTracker.insertChatCode",
-        "title": "Insert Chat Code at Cursor (Tracked)"
-      },
-      {
-        "command": "copilotInsightTracker.insertChatCodeNewFile",
-        "title": "Insert Chat Code into New File (Tracked)"
-      },
-      {
-        "command": "copilotInsightTracker.acceptInlineChat",
-        "title": "Accept Inline Chat Changes (Tracked)"
-      },
-      {
-        "command": "copilotInsightTracker.acceptEditingFile",
-        "title": "Accept Editing Session File (Tracked)"
-      },
-      {
-        "command": "copilotInsightTracker.acceptAllEditingFiles",
-        "title": "Accept All Editing Session Files (Tracked)"
-      },
-      {
-        "command": "copilotInsightTracker.acceptEditingHunk",
-        "title": "Accept Editing Session Hunk (Tracked)"
-      },
-      {
-        "command": "copilotInsightTracker.discardEditingFile",
-        "title": "Discard Editing Session File (Tracked)"
-      },
-      {
-        "command": "copilotInsightTracker.discardAllEditingFiles",
-        "title": "Discard All Editing Session Files (Tracked)"
-      },
-      {
-        "command": "copilotInsightTracker.paste",
-        "title": "Paste (Tracked)"
       }
     ],
     "keybindings": [
@@ -132,18 +84,6 @@
         "key": "ctrl+shift+right",
         "mac": "cmd+shift+right",
         "when": "copilotInsightTracker.active && inlineSuggestionVisible"
-      },
-      {
-        "command": "copilotInsightTracker.paste",
-        "key": "ctrl+v",
-        "mac": "cmd+v",
-        "when": "copilotInsightTracker.active && editorTextFocus && !editorReadonly"
-      },
-      {
-        "command": "copilotInsightTracker.paste",
-        "key": "ctrl+shift+v",
-        "mac": "cmd+shift+v",
-        "when": "copilotInsightTracker.active && editorTextFocus && !editorReadonly"
       }
     ]
   },
@@ -164,7 +104,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "@types/vscode": "^1.108.1",
+    "@types/vscode": "^1.100.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.27.2",

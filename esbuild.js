@@ -24,29 +24,38 @@ const esbuildProblemMatcherPlugin = {
 };
 
 async function main() {
-	const ctx = await esbuild.context({
-		entryPoints: [
-			'src/extension.ts'
-		],
+	const sharedOptions = {
 		bundle: true,
 		format: 'cjs',
 		minify: production,
 		sourcemap: !production,
 		sourcesContent: false,
 		platform: 'node',
+		logLevel: 'silent',
+		plugins: [esbuildProblemMatcherPlugin],
+	};
+
+	// Main extension bundle
+	const extCtx = await esbuild.context({
+		...sharedOptions,
+		entryPoints: ['src/extension.ts'],
 		outfile: 'dist/extension.js',
 		external: ['vscode'],
-		logLevel: 'silent',
-		plugins: [
-			/* add to the end of plugins array */
-			esbuildProblemMatcherPlugin,
-		],
 	});
+
+	// Hook handler - standalone Node.js script (no vscode dependency)
+	const hookCtx = await esbuild.context({
+		...sharedOptions,
+		entryPoints: ['src/hook-handler.ts'],
+		outfile: 'dist/hook-handler.js',
+		external: [],
+	});
+
 	if (watch) {
-		await ctx.watch();
+		await Promise.all([extCtx.watch(), hookCtx.watch()]);
 	} else {
-		await ctx.rebuild();
-		await ctx.dispose();
+		await Promise.all([extCtx.rebuild(), hookCtx.rebuild()]);
+		await Promise.all([extCtx.dispose(), hookCtx.dispose()]);
 	}
 }
 
