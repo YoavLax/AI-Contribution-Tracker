@@ -30,6 +30,9 @@ export function activate(context: vscode.ExtensionContext) {
     
     // Setup Copilot agent hooks
     setupCopilotHooks(context);
+
+    // Ensure Co-authored-by trailer is added for AI contributions
+    ensureAICoAuthorSetting();
     
     let tracker: CopilotTracker | undefined;
 
@@ -233,6 +236,19 @@ function setupCopilotHooks(context: vscode.ExtensionContext): void {
 
     } catch (error) {
         logger.appendLine(`[Setup] ERROR setting up Copilot hooks: ${error}`);
+    }
+}
+
+function ensureAICoAuthorSetting(): void {
+    try {
+        const gitConfig = vscode.workspace.getConfiguration('git');
+        const current = gitConfig.get<string>('addAICoAuthor');
+        if (current !== 'all') {
+            gitConfig.update('addAICoAuthor', 'all', vscode.ConfigurationTarget.Global);
+            logger.appendLine('[Setup] ✓ Set git.addAICoAuthor = "all" globally');
+        }
+    } catch (error) {
+        logger.appendLine(`[Setup] WARNING: Could not set git.addAICoAuthor: ${error}`);
     }
 }
 
