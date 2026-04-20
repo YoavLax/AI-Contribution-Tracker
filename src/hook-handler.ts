@@ -463,6 +463,56 @@ export function formatMarker(state: TrackerState): string {
     return 'Impacted by AI';
 }
 
+/**
+ * Eagerly write/update the AI_IMPACT_PENDING flag with current accumulated state.
+ * Called at SubagentStop and UserPromptSubmit so the flag is present if a commit
+ * happens BEFORE the Stop event fires (which is the common case when the agent
+ * runs git-commit as part of its response).
+ *
+ * Merge rules (same as handleStop):
+ * - If flag already contains model info, don't downgrade it.
+ * - If flag contains "Inline" marker, merge inline + agent data.
+ * - Otherwise overwrite with current state marker.
+ */
+function writeFlagEagerly(gitDir: string, state: TrackerState): void {
+    if (state.promptCount === 0 && state.mainAgentTypes.length === 0 &&
+        state.subagentTypes.length === 0 && state.subagentCount === 0) {
+        return; // Nothing meaningful to write yet
+    }
+
+    const flagPath = getFlagPath(gitDir);
+    const newMarker = formatMarker(state);
+
+    if (fs.existsSync(flagPath)) {
+        const existing = fs.readFileSync(flagPath, 'utf8').trim();
+        // Don't overwrite a flag that already has model info (written by Stop)
+        if (existing.includes('Model:')) {
+            return;
+        }
+        if (existing.includes('Inline')) {
+            // Merge: inline flag present — reuse the same merge logic
+            const agentParts: string[] = [];
+            const uniqueMain = [...new Set(state.mainAgentTypes)];
+            if (uniqueMain.length > 0) { agentParts.push(`Agent mode: ${uniqueMain.join(', ')}`); }
+            if (state.models && state.models.length > 0) { agentParts.push(`Model: ${state.models.join(', ')}`); }
+            if (state.promptCount > 0) { agentParts.push(`Prompts: ${state.promptCount}`); }
+            const uniqueSub = [...new Set(state.subagentTypes)];
+            if (uniqueSub.length > 0) { agentParts.push(`Sub-agents mode: ${uniqueSub.join(', ')}`); }
+            const uniqueSubModels = [...new Set(state.subagentModels || [])];
+            if (uniqueSubModels.length > 0) { agentParts.push(`sub-Agent models: ${uniqueSubModels.join(', ')}`); }
+            if (state.subagentCount > 0) { agentParts.push(`sub-Agent prompts: ${state.subagentCount}`); }
+            const combined = agentParts.length > 0
+                ? `Impacted by AI (Inline + ${agentParts.join(' | ')})`
+                : 'Impacted by AI (Inline)';
+            fs.writeFileSync(flagPath, combined);
+        } else {
+            fs.writeFileSync(flagPath, newMarker);
+        }
+    } else {
+        fs.writeFileSync(flagPath, newMarker);
+    }
+}
+
 // ─── Event Handlers ─────────────────────────────────────────────────────────
 
 export function handleSessionStart(input: HookInput, gitDir: string): void {
@@ -493,6 +543,8 @@ export function handleUserPromptSubmit(input: HookInput, gitDir: string): void {
         }
     }
     saveState(gitDir, state);
+    // Eagerly write flag so it's present if a commit happens before Stop fires
+    writeFlagEagerly(gitDir, state);
 }
 
 export function handleSubagentStart(input: HookInput, gitDir: string): void {
@@ -511,6 +563,8 @@ export function handleSubagentStop(input: HookInput, gitDir: string): void {
         state.activeSubagents -= 1;
     }
     saveState(gitDir, state);
+    // Eagerly write flag so it's present if a commit happens before Stop fires
+    writeFlagEagerly(gitDir, state);
 }
 
 export function handleStop(input: HookInput, gitDir: string): void {
