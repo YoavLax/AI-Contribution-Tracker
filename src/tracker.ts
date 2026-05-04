@@ -1,26 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-
-// Minimal Git API definition
-interface GitAPI {
-    repositories: Repository[];
-    getRepository(uri: vscode.Uri): Repository | null;
-}
-
-interface RepositoryState {
-    HEAD?: { commit?: string };
-    onDidChange: vscode.Event<void>;
-}
-
-interface Repository {
-    rootUri: vscode.Uri;
-    state: RepositoryState;
-}
-
-interface GitExtension {
-    getAPI(version: number): GitAPI;
-}
+import { GitAPI, Repository, GitExtension } from './git';
 
 export interface CodeEvent {
     timestamp: number;
