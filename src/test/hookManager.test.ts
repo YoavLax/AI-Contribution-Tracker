@@ -184,25 +184,17 @@ suite('CommitHookManager', function () {
         fs.mkdirSync(subA, { recursive: true });
         fs.mkdirSync(subB, { recursive: true });
 
-        let writeCount = 0;
-        const hook = hookFilePath(repoDir);
-        const originalWriteFile = fs.writeFileSync.bind(fs);
-        // Count writes to the specific hook file
-        const spy = (file: fs.PathOrFileDescriptor, data: unknown, ...rest: unknown[]) => {
-            if (file === hook) { writeCount++; }
-            return (originalWriteFile as (...a: unknown[]) => void)(file, data, ...rest);
-        };
-        (fs as unknown as Record<string, unknown>).writeFileSync = spy;
-
         const stub = sinon_workspaceFolders(fakeWorkspaceFolders([subA, subB]));
         try {
             manager.installForWorkspace();
         } finally {
             stub.restore();
-            (fs as unknown as Record<string, unknown>).writeFileSync = originalWriteFile;
         }
 
-        assert.strictEqual(writeCount, 1, 'Hook should be written exactly once for the shared root');
+        // installInRepo logs one line per actual install — verify it fired exactly once
+        const installLogs = logger.lines.filter(l => l.includes('Installed commit-msg hook'));
+        assert.strictEqual(installLogs.length, 1, 'Hook should be installed exactly once for the shared root');
+        assert.ok(fs.existsSync(hookFilePath(repoDir)), 'Hook file should exist');
     });
 
     // -----------------------------------------------------------------------
