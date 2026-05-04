@@ -54,8 +54,11 @@ export class CommitHookManager implements vscode.Disposable {
     }
 
     /**
-     * Removes every hook this instance installed. Hooks owned by other tools
-     * are never touched.
+     * Removes every hook this instance installed. Called automatically when the
+     * extension deactivates via `context.subscriptions`. Since AI_IMPACT_PENDING
+     * is only written while VS Code is running, hooks being absent after VS Code
+     * closes is intentional — no git operation is ever silently missed.
+     * Hooks owned by other tools are never touched.
      */
     dispose(): void {
         for (const root of this.installedRoots) {
@@ -107,14 +110,16 @@ export class CommitHookManager implements vscode.Disposable {
             if (os.platform() !== 'win32') {
                 fs.chmodSync(hookFile, '755');
             }
-            this.installedRoots.push(gitRoot);
+            if (!this.installedRoots.includes(gitRoot)) {
+                this.installedRoots.push(gitRoot);
+            }
             this.logger.appendLine(`[Hooks] Installed commit-msg hook in ${gitRoot}`);
         } catch (error) {
             this.logger.appendLine(`[Hooks] Failed to install hook in ${gitRoot}: ${error}`);
             vscode.window.showWarningMessage(
                 `AI Contribution Tracker: Could not install git hook in ${gitRoot}.`,
                 'Show Logs'
-            ).then(choice => { if (choice === 'Show Logs') { this.logger.show(); } });
+            ).then((choice: string | undefined) => { if (choice === 'Show Logs') { this.logger.show(); } });
         }
     }
 
@@ -155,7 +160,7 @@ export class CommitHookManager implements vscode.Disposable {
             '    if [ -z "$MARKER" ]; then',
             '        MARKER="Impacted by AI"',
             '    fi',
-            '    if ! grep -q "$MARKER" "$1"; then',
+            '    if ! grep -qF "$MARKER" "$1"; then',
             '        echo "" >> "$1"',
             '        echo "$MARKER" >> "$1"',
             '    fi',

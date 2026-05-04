@@ -22,8 +22,12 @@ class SilentLogger implements vscode.OutputChannel {
     dispose(): void {}
 }
 
+const tempDirs: string[] = [];
+
 function createTempDir(): string {
-    return fs.mkdtempSync(path.join(os.tmpdir(), 'hook-manager-test-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hook-manager-test-'));
+    tempDirs.push(dir);
+    return dir;
 }
 
 function initGitRepo(dir: string): void {
@@ -61,6 +65,9 @@ suite('CommitHookManager', function () {
 
     teardown(() => {
         manager.dispose();
+        for (const dir of tempDirs.splice(0)) {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
     });
 
     // -----------------------------------------------------------------------
@@ -196,6 +203,83 @@ suite('CommitHookManager', function () {
         }
 
         assert.strictEqual(writeCount, 1, 'Hook should be written exactly once for the shared root');
+    });
+
+    // -----------------------------------------------------------------------
+
+    test('migrateFromLegacyGlobalSetup clears legacy core.hooksPath when it matches', () => {
+        const legacyBase = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-hooks-base-'));
+        const legacyDir = path.join(legacyBase, 'git-hooks');
+        fs.mkdirSync(legacyDir, { recursive: true });
+
+        // Capture the current global hooksPath so we can restore it after the test
+        let originalHooksPath: string | undefined;
+        try {
+            originalHooksPath = cp.execSync('git config --global core.hooksPath', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+        } catch {
+            originalHooksPath = undefined;
+        }
+
+        cp.execSync(`git config --global core.hooksPath "${legacyDir}"`, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+        try {
+            const mockContext = {
+                globalStorageUri: { fsPath: legacyBase },
+            } as unknown as vscode.ExtensionContext;
+
+            manager.migrateFromLegacyGlobalSetup(mockContext);
+
+            let result = '';
+            try {
+                result = cp.execSync('git config --global core.hooksPath', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+            } catch {
+                // unset is expected — result stays ''
+            }
+            assert.strictEqual(result, '', 'Global core.hooksPath should be cleared after migration');
+            assert.ok(logger.lines.some(l => l.includes('Cleared legacy')), 'Log should mention clearing legacy path');
+        } finally {
+            // Restore global git config to its original state
+            if (originalHooksPath !== undefined) {
+                cp.execSync(`git config --global core.hooksPath "${originalHooksPath}"`, { stdio: ['pipe', 'pipe', 'pipe'] });
+            } else {
+                try { cp.execSync('git config --global --unset core.hooksPath', { stdio: ['pipe', 'pipe', 'pipe'] }); } catch { /* already unset */ }
+            }
+            fs.rmSync(legacyBase, { recursive: true, force: true });
+        }
+    });
+
+    // -----------------------------------------------------------------------
+
+    test('migrateFromLegacyGlobalSetup does nothing when hooksPath points elsewhere', () => {
+        // Capture original state
+        let originalHooksPath: string | undefined;
+        try {
+            originalHooksPath = cp.execSync('git config --global core.hooksPath', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+        } catch {
+            originalHooksPath = undefined;
+        }
+
+        const unrelatedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'unrelated-hooks-'));
+        cp.execSync(`git config --global core.hooksPath "${unrelatedDir}"`, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+        try {
+            const mockContext = {
+                globalStorageUri: { fsPath: fs.mkdtempSync(path.join(os.tmpdir(), 'ext-storage-')) },
+            } as unknown as vscode.ExtensionContext;
+
+            manager.migrateFromLegacyGlobalSetup(mockContext);
+
+            const result = cp.execSync('git config --global core.hooksPath', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+            assert.strictEqual(result, unrelatedDir, 'Unrelated hooksPath must not be modified');
+            assert.ok(!logger.lines.some(l => l.includes('Cleared legacy')), 'No migration log should appear');
+        } finally {
+            if (originalHooksPath !== undefined) {
+                cp.execSync(`git config --global core.hooksPath "${originalHooksPath}"`, { stdio: ['pipe', 'pipe', 'pipe'] });
+            } else {
+                try { cp.execSync('git config --global --unset core.hooksPath', { stdio: ['pipe', 'pipe', 'pipe'] }); } catch { /* already unset */ }
+            }
+            fs.rmSync(unrelatedDir, { recursive: true, force: true });
+        }
     });
 });
 
