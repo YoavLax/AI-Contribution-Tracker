@@ -7,11 +7,16 @@ import { execSync } from 'child_process';
 const HOOK_OWNERSHIP_MARKER = '# Managed by AI Contribution Tracker';
 const HOOK_FILE_NAME = 'commit-msg';
 const LEGACY_GLOBAL_HOOKS_SUBDIR = 'git-hooks';
+const GLOBAL_STATE_KEY = 'installedHookRoots';
 
 export class CommitHookManager implements vscode.Disposable {
-    private readonly installedRoots: string[] = [];
+    /** Roots installed during this VS Code session only (subset of persisted set). */
+    private readonly sessionRoots: string[] = [];
 
-    constructor(private readonly logger: vscode.OutputChannel) {}
+    constructor(
+        private readonly logger: vscode.OutputChannel,
+        private readonly globalState: vscode.Memento,
+    ) {}
 
     /**
      * Installs the commit-msg hook into every git repository found in the
@@ -54,17 +59,27 @@ export class CommitHookManager implements vscode.Disposable {
     }
 
     /**
-     * Removes every hook this instance installed. Called automatically when the
-     * extension deactivates via `context.subscriptions`. Since AI_IMPACT_PENDING
-     * is only written while VS Code is running, hooks being absent after VS Code
-     * closes is intentional — no git operation is ever silently missed.
-     * Hooks owned by other tools are never touched.
+     * Removes every hook this extension ever installed — including roots from
+     * previous VS Code sessions that were persisted in globalState. Called
+     * automatically when the extension deactivates via `context.subscriptions`.
+     *
+     * Since AI_IMPACT_PENDING is only written while VS Code is running, hooks
+     * being absent after VS Code closes is intentional — no git operation is
+     * ever silently missed. Hooks owned by other tools are never touched.
+     *
+     * Known limitation: if two VS Code windows are open simultaneously and the
+     * extension is uninstalled from one, that window's dispose() will attempt to
+     * remove hooks for ALL persisted roots, including repos open in the other
+     * window. Fixing this cleanly requires per-session ownership tracking and
+     * is out of scope.
      */
     dispose(): void {
-        for (const root of this.installedRoots) {
+        const allRoots = this.readPersistedRoots();
+        for (const root of allRoots) {
             this.removeFromRepo(root);
         }
-        this.installedRoots.length = 0;
+        this.persistRoots(new Set());
+        this.sessionRoots.length = 0;
     }
 
     // -------------------------------------------------------------------------
@@ -110,9 +125,10 @@ export class CommitHookManager implements vscode.Disposable {
             if (os.platform() !== 'win32') {
                 fs.chmodSync(hookFile, '755');
             }
-            if (!this.installedRoots.includes(gitRoot)) {
-                this.installedRoots.push(gitRoot);
+            if (!this.sessionRoots.includes(gitRoot)) {
+                this.sessionRoots.push(gitRoot);
             }
+            this.addPersistedRoot(gitRoot);
             this.logger.appendLine(`[Hooks] Installed commit-msg hook in ${gitRoot}`);
         } catch (error) {
             this.logger.appendLine(`[Hooks] Failed to install hook in ${gitRoot}: ${error}`);
@@ -138,6 +154,20 @@ export class CommitHookManager implements vscode.Disposable {
         } catch (error) {
             this.logger.appendLine(`[Hooks] Failed to remove hook from ${gitRoot}: ${error}`);
         }
+    }
+
+    private readPersistedRoots(): Set<string> {
+        return new Set(this.globalState.get<string[]>(GLOBAL_STATE_KEY, []));
+    }
+
+    private persistRoots(roots: Set<string>): void {
+        this.globalState.update(GLOBAL_STATE_KEY, [...roots]);
+    }
+
+    private addPersistedRoot(gitRoot: string): void {
+        const roots = this.readPersistedRoots();
+        roots.add(gitRoot);
+        this.persistRoots(roots);
     }
 
     private isOwnedByExtension(hookContent: string): boolean {

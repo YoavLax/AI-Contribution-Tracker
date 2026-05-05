@@ -22,6 +22,22 @@ class SilentLogger implements vscode.OutputChannel {
     dispose(): void {}
 }
 
+class MockMemento implements vscode.Memento {
+    private readonly store = new Map<string, unknown>();
+    get<T>(key: string): T | undefined;
+    get<T>(key: string, defaultValue: T): T;
+    get<T>(key: string, defaultValue?: T): T | undefined {
+        return this.store.has(key) ? (this.store.get(key) as T) : defaultValue;
+    }
+    update(key: string, value: unknown): Thenable<void> {
+        this.store.set(key, value);
+        return Promise.resolve();
+    }
+    keys(): readonly string[] {
+        return [...this.store.keys()];
+    }
+}
+
 const tempDirs: string[] = [];
 
 function createTempDir(): string {
@@ -56,11 +72,13 @@ suite('CommitHookManager', function () {
     this.timeout(10000);
 
     let logger: SilentLogger;
+    let memento: MockMemento;
     let manager: CommitHookManager;
 
     setup(() => {
         logger = new SilentLogger();
-        manager = new CommitHookManager(logger);
+        memento = new MockMemento();
+        manager = new CommitHookManager(logger, memento);
     });
 
     teardown(() => {
@@ -195,6 +213,45 @@ suite('CommitHookManager', function () {
         const installLogs = logger.lines.filter(l => l.includes('Installed commit-msg hook'));
         assert.strictEqual(installLogs.length, 1, 'Hook should be installed exactly once for the shared root');
         assert.ok(fs.existsSync(hookFilePath(repoDir)), 'Hook file should exist');
+    });
+
+    // -----------------------------------------------------------------------
+
+    test('installForWorkspace persists installed root to globalState', () => {
+        const repoDir = createTempDir();
+        initGitRepo(repoDir);
+
+        const stub = sinon_workspaceFolders(fakeWorkspaceFolders([repoDir]));
+        try {
+            manager.installForWorkspace();
+        } finally {
+            stub.restore();
+        }
+
+        const persisted: string[] = memento.get('installedHookRoots', []);
+        assert.ok(persisted.includes(fs.realpathSync(repoDir)), 'Installed root should be persisted in globalState');
+    });
+
+    // -----------------------------------------------------------------------
+
+    test('dispose removes hooks for roots persisted from a previous session', () => {
+        const repoDir = createTempDir();
+        initGitRepo(repoDir);
+
+        // Simulate a previous session: write the hook file and populate globalState
+        // directly, without going through installForWorkspace() this session.
+        const hooksDir = path.join(repoDir, '.git', 'hooks');
+        fs.mkdirSync(hooksDir, { recursive: true });
+        fs.writeFileSync(hookFilePath(repoDir), '#!/bin/sh\n# Managed by AI Contribution Tracker\n');
+        memento.update('installedHookRoots', [repoDir]);
+
+        // A fresh manager for this "new session" — sessionRoots is empty.
+        const freshManager = new CommitHookManager(logger, memento);
+        freshManager.dispose();
+
+        assert.ok(!fs.existsSync(hookFilePath(repoDir)), 'Hook from previous session should be removed');
+        const persisted: string[] = memento.get('installedHookRoots', []);
+        assert.strictEqual(persisted.length, 0, 'globalState should be cleared after dispose');
     });
 
     // -----------------------------------------------------------------------

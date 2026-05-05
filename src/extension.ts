@@ -7,7 +7,7 @@ export const logger = vscode.window.createOutputChannel("AI Tracker Debug");
 export function activate(context: vscode.ExtensionContext) {
     logger.appendLine('ACTIVATE: Extension is starting...');
 
-    const hookManager = new CommitHookManager(logger);
+    const hookManager = new CommitHookManager(logger, context.globalState);
     hookManager.migrateFromLegacyGlobalSetup(context);
     hookManager.installForWorkspace();
     context.subscriptions.push(hookManager);
