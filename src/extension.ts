@@ -33,6 +33,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Ensure Co-authored-by trailer is added for AI contributions
     ensureAICoAuthorSetting();
+
+    // Ensure OTEL DB span exporter is enabled so token usage is captured locally
+    ensureOtelDbSpanExporter();
     
     let tracker: CopilotTracker | undefined;
 
@@ -230,9 +233,42 @@ function setupCopilotHooks(context: vscode.ExtensionContext): void {
         };
 
         const configPath = path.join(copilotHooksDir, 'ai-commit-tracker.json');
-        fs.writeFileSync(configPath, JSON.stringify(hookConfig, null, 2));
-        logger.appendLine(`[Setup] ✓ Copilot hooks config written: ${configPath}`);
-        logger.appendLine(`[Setup] Tracking events: SessionStart, UserPromptSubmit, SubagentStart, SubagentStop, Stop`);
+
+        // Guard: only overwrite the hooks config if our installed handler is at least as
+        // large as the one already configured. This prevents an older VS Code instance
+        // (e.g., stable with a stale extension build) from overwriting a newer one
+        // (e.g., Insiders with a freshly compiled build).
+        let shouldWriteConfig = true;
+        if (fs.existsSync(configPath)) {
+            try {
+                const existingConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+                    hooks?: { Stop?: Array<{ windows?: string; command?: string }> };
+                };
+                const existingCmd = existingConfig?.hooks?.Stop?.[0]?.windows ?? '';
+                const existingPathMatch = existingCmd.match(/"([^"]+hook-handler\.js)"/i);
+                if (existingPathMatch) {
+                    const existingHandlerPath = existingPathMatch[1];
+                    if (fs.existsSync(existingHandlerPath)) {
+                        const existingSize = fs.statSync(existingHandlerPath).size;
+                        const ourSize = fs.statSync(installedHandler).size;
+                        if (existingSize > ourSize) {
+                            shouldWriteConfig = false;
+                            logger.appendLine(
+                                `[Setup] Existing handler (${existingSize}b) is newer than ours (${ourSize}b) — keeping existing config at: ${existingHandlerPath}`
+                            );
+                        }
+                    }
+                }
+            } catch {
+                // Unreadable or malformed config — overwrite it
+            }
+        }
+
+        if (shouldWriteConfig) {
+            fs.writeFileSync(configPath, JSON.stringify(hookConfig, null, 2));
+            logger.appendLine(`[Setup] ✓ Copilot hooks config written: ${configPath}`);
+            logger.appendLine(`[Setup] Tracking events: SessionStart, UserPromptSubmit, SubagentStart, SubagentStop, Stop`);
+        }
 
     } catch (error) {
         logger.appendLine(`[Setup] ERROR setting up Copilot hooks: ${error}`);
@@ -249,6 +285,35 @@ function ensureAICoAuthorSetting(): void {
         }
     } catch (error) {
         logger.appendLine(`[Setup] WARNING: Could not set git.addAICoAuthor: ${error}`);
+    }
+}
+
+/**
+ * Ensure the Copilot OTEL DB span exporter is enabled so that token usage data
+ * is captured in the local SQLite database at agent-traces.db.
+ * This setting takes effect on the next VS Code reload; we notify once if we
+ * had to change it.
+ */
+function ensureOtelDbSpanExporter(): void {
+    try {
+        const otelConfig = vscode.workspace.getConfiguration('github.copilot.chat.otel');
+        const current = otelConfig.get<boolean>('dbSpanExporter.enabled');
+        if (!current) {
+            otelConfig.update('dbSpanExporter.enabled', true, vscode.ConfigurationTarget.Global);
+            logger.appendLine('[Setup] ✓ Enabled github.copilot.chat.otel.dbSpanExporter.enabled (token tracking)');
+            vscode.window.showInformationMessage(
+                'AI Contribution Tracker: Token usage tracking enabled. Reload VS Code to activate.',
+                'Reload Now'
+            ).then(selection => {
+                if (selection === 'Reload Now') {
+                    vscode.commands.executeCommand('workbench.action.reloadWindow');
+                }
+            });
+        } else {
+            logger.appendLine('[Setup] OTEL DB span exporter already enabled — token tracking active');
+        }
+    } catch (error) {
+        logger.appendLine(`[Setup] WARNING: Could not set OTEL dbSpanExporter.enabled: ${error}`);
     }
 }
 

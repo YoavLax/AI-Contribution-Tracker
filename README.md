@@ -1,59 +1,96 @@
-<div align="center">
+﻿<div align="center">
 
 # AI Contribution Tracker
 
-**Automatically tag every git commit with detailed AI usage metadata**
+**Automatically tag every git commit with AI usage metadata — models, tokens, prompts, and cost signals. All local. Zero config.**
 
 [![Version](https://img.shields.io/visual-studio-marketplace/v/YoavLax.ai-contribution-tracker?style=flat-square&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=YoavLax.ai-contribution-tracker)
 [![License](https://img.shields.io/github/license/YoavLax/AI-Contribution-Tracker?style=flat-square)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/YoavLax/AI-Contribution-Tracker?style=flat-square)](https://github.com/YoavLax/AI-Contribution-Tracker/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/YoavLax/AI-Contribution-Tracker?style=flat-square)](https://github.com/YoavLax/AI-Commit-Tracker/stargazers)
 [![Issues](https://img.shields.io/github/issues/YoavLax/AI-Contribution-Tracker?style=flat-square)](https://github.com/YoavLax/AI-Contribution-Tracker/issues)
 
-[📦 Install](https://marketplace.visualstudio.com/items?itemName=YoavLax.ai-contribution-tracker) · [📖 Documentation](#how-it-works) · [🐛 Report Bug](https://github.com/YoavLax/AI-Contribution-Tracker/issues/new) · [💡 Request Feature](https://github.com/YoavLax/AI-Contribution-Tracker/issues/new)
-
-
+[📦 Install](https://marketplace.visualstudio.com/items?itemName=YoavLax.ai-contribution-tracker) · [📖 How It Works](#how-it-works) · [🐛 Report Bug](https://github.com/YoavLax/AI-Contribution-Tracker/issues/new) · [💡 Request Feature](https://github.com/YoavLax/AI-Contribution-Tracker/issues/new)
 
 ---
 
-Know exactly how AI shaped every commit — which models, how many prompts, which sub-agents — all captured automatically in your git history.
+*Know exactly how AI shaped every commit — which models were used, how many tokens were consumed per model (including reasoning tokens and cache hits), how many prompts were exchanged, and which sub-agents were involved. All captured automatically in your git history.*
 
 </div>
 
-## Core Team
+---
 
-AI Contribution Tracker is a collaboration project by:
+## What Gets Recorded
 
-|                                                                                   Author                                                                                    |                                                                                   Author                                                                                    |                                                                                 Contributor                                                                                  |
-| :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-| <img src="https://github.com/YoavLax.png?size=115" width="115"><br><sub>@YoavLax</sub><br><br>[![GitHub](https://img.shields.io/badge/GitHub-000000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/YoavLax)<br>[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/yoav-lax-2127b9189/) | <img src="https://github.com/davidexterman.png?size=115" width="115"><br><sub>@davidexterman</sub><br><br>[![GitHub](https://img.shields.io/badge/GitHub-000000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/davidexterman)<br>[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/david-exterman-a755a7123/) | <img src="https://camo.githubusercontent.com/227ad1394a807d1283ff3240b89d669f4a3eef68443e72b7dfb1c794a6af0161/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f676974687562253230636f70696c6f742d3030303030303f7374796c653d666f722d7468652d6261646765266c6f676f3d676974687562636f70696c6f74266c6f676f436f6c6f723d7768697465" width="115"><br><sub>@GitHub‑Copilot</sub><br><br>[![GitHub](https://img.shields.io/badge/GitHub-000000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/features/copilot)<br>[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/products/github-copilot/) |
+Every AI-assisted commit automatically receives a detailed marker. Here are real examples:
 
-</div>
+**Single model, one prompt:**
+```
+feat: add dark mode toggle
+
+Impacted by AI (Agent mode: new | Model: claude-sonnet-4.6 | Prompts: 1 | Tokens: claude-sonnet-4-6: 48k in/2k out (41k cached))
+```
+
+**Multi-model session — Claude for reasoning, Gemini for search:**
+```
+refactor: split auth service into separate module
+
+Impacted by AI (Agent mode: new | Model: claude-sonnet-4.6, gemini-3.1-pro-preview | Prompts: 2 | Tokens: claude-sonnet-4-6: 296k in/5k out (243k cached) | gemini-3.1-pro-preview: 104k in/678 out (74k cached))
+```
+
+**Reasoning model with thinking tokens:**
+```
+fix: resolve race condition in async queue
+
+Impacted by AI (Agent mode: copilot | Model: gpt-5.4 | Prompts: 1 | Tokens: gpt-5.4-2026-03-05: 143k in/1k out (118k cached) +333 reasoning)
+```
+
+**Sub-agents + inline suggestions in the same session:**
+```
+docs: rewrite contributing guide
+
+Impacted by AI (Inline + Agent mode: new | Model: claude-sonnet-4.6 | Prompts: 3 | Sub-agents mode: Explore | sub-Agent prompts: 2 | Tokens: claude-sonnet-4-6: 180k in/4k out (155k cached))
+```
 
 ---
 
 ## How It Works
 
-The extension uses two complementary detection mechanisms to track AI contributions and automatically append a rich `Impacted by AI` marker to your commit messages.
+The extension uses three complementary mechanisms, all running locally.
 
-### 1. Copilot Hooks (Agent Mode & Sub-agents)
+### 1. Token Usage via OTEL
 
-[VS Code Copilot Hooks](https://code.visualstudio.com/docs/copilot/customization/hooks) fire lifecycle events during every Copilot chat session. The extension installs a lightweight Node.js handler that listens to five events:
+The extension activates Copilot's built-in local OpenTelemetry span exporter (`github.copilot.chat.otel.dbSpanExporter.enabled`), which writes real measured token counts to a local SQLite database (`agent-traces.db`) — no network required, no third-party telemetry.
+
+At the end of each session, the hook handler queries that database and records **per-model** token breakdowns directly in the commit marker:
+
+| Token Field | Description |
+|---|---|
+| `NNNk in` | Input tokens sent to the model |
+| `NNNk out` | Output tokens generated |
+| `(NNNk cached)` | Prompt cache hits (billed at reduced rate) |
+| `+NNN reasoning` | Internal chain-of-thought tokens (reasoning models only) |
+
+Token data is **time-scoped** to the current session — spans from previous sessions in the same VS Code window are excluded, so each commit reflects only the tokens consumed for that specific piece of work.
+
+### 2. Copilot Hooks (Agent Sessions & Sub-agents)
+
+[VS Code Copilot Hooks](https://code.visualstudio.com/docs/copilot/customization/hooks) fire lifecycle events during every Copilot chat session. A lightweight Node.js handler listens to five events:
 
 | Hook Event | What It Tracks |
 |---|---|
-| `SessionStart` | Records the session ID and agent mode (e.g., `new`, `edit`) |
-| `UserPromptSubmit` | Counts user prompts (excludes sub-agent delegated prompts) |
+| `SessionStart` | Records the session ID and agent mode (e.g., `new`, `copilot`) |
+| `UserPromptSubmit` | Counts user prompts; ignores sub-agent delegated prompts |
 | `SubagentStart` | Records sub-agent type (e.g., `Explore`) and increments count |
 | `SubagentStop` | Decrements the active sub-agent counter |
-| `Stop` | Extracts models from VS Code logs, writes the flag file |
+| `Stop` | Queries token DB, parses log for model names, writes the flag file |
 
-On `Stop`, the handler parses the VS Code Copilot Chat log file to extract the exact models used — separated into **user-selected models** (from `[panel/editAgent]` entries) and **sub-agent models** (from `[tool/runSubagent*]` entries). Log parsing is scoped by session ID and timestamp to ensure only data from the current session is included.
+On `Stop`, the handler also parses the VS Code Copilot Chat log to extract model names — separated into **user-selected models** (`[panel/editAgent]` entries) and **sub-agent models** (`[tool/runSubagent*]` entries). Parsing is scoped by session ID and timestamp.
 
-All state accumulates in `.git/ai-tracker-state.json` until consumed by the commit-msg hook.
+State accumulates in `.git/ai-tracker-state.json` until consumed by the commit-msg hook.
 
-### 2. Inline Suggestion Tracking (Deterministic)
+### 3. Inline Suggestion Tracking (Deterministic)
 
-For ghost-text completions, the extension intercepts acceptance commands with zero false positives:
+For ghost-text completions, the extension intercepts acceptance keystrokes with zero false positives:
 
 | Keybinding | Action |
 |---|---|
@@ -61,84 +98,70 @@ For ghost-text completions, the extension intercepts acceptance commands with ze
 | `Ctrl+Right` | Accept next word |
 | `Ctrl+Shift+Right` | Accept next line |
 
-When an inline suggestion is accepted, a flag is written to `.git/AI_IMPACT_PENDING`.
+When an inline suggestion is accepted, the flag is written to `.git/AI_IMPACT_PENDING`. If an agent session also ran before the commit, both are merged: `Impacted by AI (Inline + Agent mode: ...)`.
 
-### 3. Git Integration
+### 4. Git Integration
 
-A global `commit-msg` hook (auto-installed via `core.hooksPath`) checks for the `AI_IMPACT_PENDING` flag at commit time. If present, it appends the marker to the commit message and cleans up both the flag and the accumulated state file.
-
----
-
-## Commit Message Examples
-
-**Agent mode with a single model and one prompt:**
-```
-feat: add user authentication
-
-Impacted by AI (Agent mode: new | Model: claude-sonnet-4.6 | Prompts: 1)
-```
-
-**Multiple models, sub-agents, and several prompts:**
-```
-refactor: improve performance
-
-Impacted by AI (Agent mode: new | Model: claude-sonnet-4.6, gpt-4o | Prompts: 3 | Sub-agents mode: Explore | sub-Agent models: claude-haiku-4.5 | sub-Agent prompts: 4)
-```
-
-**Inline suggestions only:**
-```
-fix: resolve null check
-
-Impacted by AI (Inline)
-```
-
-**Both inline and agent mode in the same session:**
-```
-docs: update readme
-
-Impacted by AI (Inline + Agent mode: new | Model: gemini-3.1-pro-preview | Prompts: 2)
-```
+A global `commit-msg` hook (auto-installed via `git config --global core.hooksPath`) fires at every commit across all your repositories. It reads `AI_IMPACT_PENDING`, appends the marker to the commit message, then removes both the flag and the state file.
 
 ---
 
-## Marker Fields
-
-The `Impacted by AI (...)` marker can contain any combination of the following fields:
+## Marker Field Reference
 
 | Field | Description | Example |
 |---|---|---|
-| `Agent mode` | The top-level agent type that initiated the session | `new`, `edit` |
-| `Model` | User-selected model(s) used for the main agent | `claude-sonnet-4.6`, `gpt-4o` |
+| `Agent mode` | Top-level agent type | `new`, `copilot`, `edit` |
+| `Model` | User-selected model(s) for the main agent | `claude-sonnet-4.6`, `gpt-5.4` |
 | `Prompts` | Number of user prompts (excludes sub-agent internal prompts) | `3` |
-| `Sub-agents mode` | Types of sub-agents invoked | `Explore` |
-| `sub-Agent models` | Model(s) used internally by sub-agents | `claude-haiku-4.5` |
-| `sub-Agent prompts` | Total number of sub-agent invocations | `4` |
-| `Inline` | Present when inline ghost-text suggestions were accepted | — |
+| `Sub-agents mode` | Types of sub-agents invoked | `Explore`, `Plan` |
+| `sub-Agent models` | Models used internally by sub-agents | `claude-haiku-4.5` |
+| `sub-Agent prompts` | Total sub-agent invocations | `4` |
+| `Tokens` | Per-model token breakdown (input / output / cached / reasoning) | `claude-sonnet-4-6: 48k in/2k out (41k cached)` |
+| `Inline` | Present when ghost-text completions were accepted | — |
 
 ---
 
 ## Features
 
-- **Automatic** — Install once, every AI-assisted commit is tagged. No manual steps.
-- **Rich Metadata** — Captures model names, prompt counts, agent types, and sub-agent details.
-- **Separated Models** — User-selected models and internal sub-agent models are tracked independently.
-- **Session-Scoped** — Log parsing is scoped to the correct VS Code window and time range, preventing cross-window or cross-commit leakage.
-- **Inline + Agent** — Tracks both inline ghost-text acceptances and full agent/chat sessions. Merges them when both occur before a commit.
-- **Global Git Hooks** — One hook covers all repositories. No per-repo setup needed.
-- **Privacy Focused** — All processing happens locally. No code or prompts are sent to external servers.
+- **Automatic** — Install once; every AI-assisted commit is tagged from that moment on. No per-repo setup.
+- **Token Tracking** — Real measured token counts from Copilot's OTEL pipeline, not estimates.
+- **Per-Model Breakdown** — Each model's input, output, cached, and reasoning tokens recorded separately — ready for cost calculation.
+- **Reasoning Tokens** — Thinking tokens from reasoning models (GPT-5.x, o1, o3) are tracked and labeled `+NNN reasoning`.
+- **Session-Scoped** — Token queries are time-bounded to the current session; previous commits in the same window don't bleed in.
+- **Multi-Session Accumulation** — Multiple agent sessions before a single commit are merged and their token counts summed.
+- **Inline + Agent** — Tracks both ghost-text acceptances and full chat sessions; merges them when both occur before a commit.
+- **Global Git Hooks** — One hook covers all repositories. No per-repo initialization.
+- **Privacy First** — Everything runs locally. No code, prompts, or token data leaves your machine.
+
+---
 
 ## Requirements
 
-- VS Code 1.100.0 or later (with Copilot Hooks support)
-- Git installed and repository initialized
+- VS Code 1.100.0 or later (Copilot Hooks support)
 - GitHub Copilot extension installed
+- Git initialized in your repository
+- Node.js 22+ (for `node:sqlite` built-in — included with VS Code's bundled Node)
+
+---
+
+## Core Team
+
+<div align="center">
+
+|                                                                                   Author                                                                                    |                                                                                   Author                                                                                    |                                                                                 Contributor                                                                                  |
+| :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
+| <img src="https://github.com/YoavLax.png?size=115" width="115"><br><sub>@YoavLax</sub><br><br>[![GitHub](https://img.shields.io/badge/GitHub-000000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/YoavLax)<br>[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/yoav-lax-2127b9189/) | <img src="https://github.com/davidexterman.png?size=115" width="115"><br><sub>@davidexterman</sub><br><br>[![GitHub](https://img.shields.io/badge/GitHub-000000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/davidexterman)<br>[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/david-exterman-a755a7123/) | <img src="https://camo.githubusercontent.com/227ad1394a807d1283ff3240b89d669f4a3eef68443e72b7dfb1c794a6af0161/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f676974687562253230636f70696c6f742d3030303030303f7374796c653d666f722d7468652d6261646765266c6f676f3d676974687562636f70696c6f74266c6f676f436f6c6f723d7768697465" width="115"><br><sub>@GitHub-Copilot</sub><br><br>[![GitHub](https://img.shields.io/badge/GitHub-000000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/features/copilot)<br>[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/products/github-copilot/) |
+
+</div>
+
+---
 
 ## Development
 
 ```bash
-npm run compile        # Build the extension
-npm run watch          # Watch mode for development
-npm run test           # Run tests
+npm run compile        # One-time build
+npm run watch          # Watch mode (or press F5 in VS Code)
+npm run test           # Run extension tests
 ```
 
 Press **F5** to launch the Extension Development Host for debugging.
@@ -147,11 +170,12 @@ Press **F5** to launch the Extension Development Host for debugging.
 
 | File | Purpose |
 |---|---|
-| `src/extension.ts` | Extension activation, global git hooks setup, Copilot hooks config |
-| `src/hook-handler.ts` | Standalone Node.js hook handler (Copilot Hook events) |
-| `src/tracker.ts` | Inline suggestion detection with deterministic interception |
+| `src/extension.ts` | Extension activation, global git hooks setup, Copilot hooks config, OTEL enablement |
+| `src/hook-handler.ts` | Standalone Node.js hook handler — session tracking, token DB query, marker formatting |
+| `src/tracker.ts` | Inline suggestion detection via deterministic command interception |
+
+---
 
 ## License
 
 [MIT](LICENSE)
-

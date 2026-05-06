@@ -55,6 +55,8 @@ export interface TrackerState {
     sessionId: string | null;
     stateCreatedAt: string;
     lastUpdated: string;
+    // Token usage from OTEL SQLite DB (populated at Stop event), keyed by response model
+    tokensByModel: Record<string, TokenTotals>;
 }
 
 // ─── Git Discovery ───────────────────────────────────────────────────────────
@@ -156,6 +158,20 @@ export function loadState(gitDir: string): TrackerState {
             if (typeof parsed.stateCreatedAt !== 'string') {
                 parsed.stateCreatedAt = parsed.lastUpdated || new Date().toISOString();
             }
+            // Backward compat: older state files may have flat token fields or no token data
+            if (typeof parsed.tokensByModel !== 'object' || parsed.tokensByModel === null) {
+                const byModel: Record<string, TokenTotals> = {};
+                const legacy = parsed as unknown as Record<string, number>;
+                if ((legacy['inputTokens'] ?? 0) > 0) {
+                    byModel['unknown'] = {
+                        inputTokens: legacy['inputTokens'] ?? 0,
+                        outputTokens: legacy['outputTokens'] ?? 0,
+                        cachedTokens: legacy['cachedTokens'] ?? 0,
+                        reasoningTokens: legacy['reasoningTokens'] ?? 0,
+                    };
+                }
+                parsed.tokensByModel = byModel;
+            }
             return parsed;
         } catch {
             // Corrupted state file, start fresh
@@ -172,6 +188,7 @@ export function loadState(gitDir: string): TrackerState {
         sessionId: null,
         stateCreatedAt: new Date().toISOString(),
         lastUpdated: new Date().toISOString(),
+        tokensByModel: {},
     };
 }
 
@@ -418,6 +435,80 @@ export function parseModelFromLogFile(filePath: string, afterTimestamp?: string)
     }
 }
 
+// ─── OTEL Token Query ────────────────────────────────────────────────────────
+
+export interface TokenTotals {
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    reasoningTokens: number;
+}
+
+/**
+ * Query the Copilot extension's local OTEL SQLite DB for token usage
+ * accumulated during the given VS Code session (chat_session_id),
+ * broken down per response model.
+ *
+ * The DB is created unconditionally on VS Code start; it is populated with
+ * span data only when `github.copilot.chat.otel.dbSpanExporter.enabled = true`.
+ *
+ * Path derivation: hook-handler.js lives at
+ *   <globalStorage>/yoavlax.ai-contribution-tracker/copilot-hooks/hook-handler.js
+ * The Copilot DB is at:
+ *   <globalStorage>/github.copilot-chat/agent-traces.db
+ * i.e. two levels up, then into github.copilot-chat/.
+ */
+export function queryTokensFromOtel(sessionId: string, afterMs: number): Record<string, TokenTotals> | null {
+    const dbPath = path.join(__dirname, '..', '..', 'github.copilot-chat', 'agent-traces.db');
+    if (!fs.existsSync(dbPath)) {
+        return null;
+    }
+
+    try {
+        // node:sqlite is built-in since Node 22 — no npm dependency needed
+        const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
+        const db = new DatabaseSync(dbPath, { readOnly: true });
+
+        const rows = db.prepare(
+            `SELECT
+               response_model                       AS model,
+               COALESCE(SUM(input_tokens), 0)       AS inputTokens,
+               COALESCE(SUM(output_tokens), 0)      AS outputTokens,
+               COALESCE(SUM(cached_tokens), 0)      AS cachedTokens,
+               COALESCE(SUM(reasoning_tokens), 0)   AS reasoningTokens
+             FROM spans
+             WHERE (chat_session_id = ? OR conversation_id = ?)
+               AND operation_name  = 'chat'
+               AND response_model  IS NOT NULL
+               AND start_time_ms  >= ?
+             GROUP BY response_model`
+        ).all(sessionId, sessionId, afterMs) as Array<{ model: string; inputTokens: number; outputTokens: number; cachedTokens: number; reasoningTokens: number }>;
+
+        db.close();
+
+        if (rows.length === 0) {
+            return null; // DB present but no data yet (dbSpanExporter disabled or no activity)
+        }
+
+        const result: Record<string, TokenTotals> = {};
+        for (const row of rows) {
+            if (row.inputTokens > 0 || row.outputTokens > 0) {
+                result[row.model] = {
+                    inputTokens: row.inputTokens,
+                    outputTokens: row.outputTokens,
+                    cachedTokens: row.cachedTokens,
+                    reasoningTokens: row.reasoningTokens,
+                };
+            }
+        }
+
+        return Object.keys(result).length > 0 ? result : null;
+    } catch {
+        // node:sqlite unavailable or DB locked — skip silently
+        return null;
+    }
+}
+
 // ─── Marker Formatting ──────────────────────────────────────────────────────
 
 export function formatMarker(state: TrackerState): string {
@@ -454,6 +545,19 @@ export function formatMarker(state: TrackerState): string {
     // Sub-agent invocation count
     if (state.subagentCount > 0) {
         parts.push(`sub-Agent prompts: ${state.subagentCount}`);
+    }
+
+    // Token usage per model (from OTEL DB — only shown when data is available)
+    const modelEntries = Object.entries(state.tokensByModel || {});
+    if (modelEntries.length > 0) {
+        const formatK = (n: number) => n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+        const modelParts = modelEntries.map(([model, t]) => {
+            let s = `${model}: ${formatK(t.inputTokens)} in/${formatK(t.outputTokens)} out`;
+            if (t.cachedTokens > 0) { s += ` (${formatK(t.cachedTokens)} cached)`; }
+            if (t.reasoningTokens > 0) { s += ` +${formatK(t.reasoningTokens)} reasoning`; }
+            return s;
+        });
+        parts.push(`Tokens: ${modelParts.join(' | ')}`);
     }
 
     if (parts.length > 0) {
@@ -594,6 +698,28 @@ export function handleStop(input: HookInput, gitDir: string): void {
     }
     for (const m of logModels.subagentModels) {
         if (!state.subagentModels.includes(m)) { state.subagentModels.push(m); }
+    }
+
+    // Query OTEL SQLite DB for actual token usage (requires dbSpanExporter.enabled)
+    // Accumulate into tokensByModel so multi-session commits show full totals
+    // Scope to spans after stateCreatedAt so previous sessions/commits don't bleed in
+    const otelSessionId = input.sessionId || input.session_id || state.sessionId;
+    if (otelSessionId) {
+        const afterMs = new Date(state.stateCreatedAt).getTime();
+        const tokensByModel = queryTokensFromOtel(otelSessionId, afterMs);
+        if (tokensByModel) {
+            for (const [model, t] of Object.entries(tokensByModel)) {
+                const existing = state.tokensByModel[model];
+                if (existing) {
+                    existing.inputTokens     += t.inputTokens;
+                    existing.outputTokens    += t.outputTokens;
+                    existing.cachedTokens    += t.cachedTokens;
+                    existing.reasoningTokens += t.reasoningTokens;
+                } else {
+                    state.tokensByModel[model] = { ...t };
+                }
+            }
+        }
     }
 
     // Only write flag if there was actual activity

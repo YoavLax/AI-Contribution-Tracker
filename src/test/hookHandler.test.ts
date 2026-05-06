@@ -33,6 +33,23 @@ function makeInput(overrides: Partial<HookInput>): HookInput {
     };
 }
 
+function makeState(overrides: Partial<TrackerState>): TrackerState {
+    return {
+        promptCount: 0,
+        subagentCount: 0,
+        mainAgentTypes: [],
+        subagentTypes: [],
+        activeSubagents: 0,
+        models: [],
+        subagentModels: [],
+        sessionId: null,
+        stateCreatedAt: new Date().toISOString(),
+        lastUpdated: '',
+        tokensByModel: {},
+        ...overrides,
+    };
+}
+
 suite('Hook Handler Tests', function () {
     this.timeout(10000);
 
@@ -83,18 +100,14 @@ suite('Hook Handler Tests', function () {
     });
 
     test('saveState and loadState should round-trip', () => {
-        const state: TrackerState = {
+        const state = makeState({
             promptCount: 5,
             subagentCount: 2,
             mainAgentTypes: ['default'],
             subagentTypes: ['Plan', 'copilot'],
-            activeSubagents: 0,
             models: ['claude-sonnet-4'],
-            subagentModels: [],
-            sessionId: null,
-            stateCreatedAt: new Date().toISOString(),
             lastUpdated: new Date().toISOString(),
-        };
+        });
         saveState(gitDir, state);
         
         const loaded = loadState(gitDir);
@@ -114,140 +127,113 @@ suite('Hook Handler Tests', function () {
     // ─── Marker Formatting ─────────────────────────────────────────────
 
     test('formatMarker with all fields', () => {
-        const state: TrackerState = {
+        const state = makeState({
             promptCount: 3,
             subagentCount: 1,
             mainAgentTypes: ['default'],
             subagentTypes: ['Plan'],
-            activeSubagents: 0,
             models: ['gpt-4o'],
-            subagentModels: [],
-            sessionId: null,
-            stateCreatedAt: new Date().toISOString(),
-            lastUpdated: '',
-        };
+        });
         const marker = formatMarker(state);
         assert.strictEqual(marker, 'Impacted by AI (Agent mode: default | Model: gpt-4o | Prompts: 3 | Sub-agents mode: Plan | sub-Agent prompts: 1)');
     });
 
     test('formatMarker with no model', () => {
-        const state: TrackerState = {
+        const state = makeState({
             promptCount: 2,
-            subagentCount: 0,
             mainAgentTypes: ['copilot'],
-            subagentTypes: [],
-            activeSubagents: 0,
-            models: [],
-            subagentModels: [],
-            sessionId: null,
-            stateCreatedAt: new Date().toISOString(),
-            lastUpdated: '',
-        };
+        });
         const marker = formatMarker(state);
         assert.strictEqual(marker, 'Impacted by AI (Agent mode: copilot | Prompts: 2)');
     });
 
     test('formatMarker with multiple models', () => {
-        const state: TrackerState = {
+        const state = makeState({
             promptCount: 2,
-            subagentCount: 0,
             mainAgentTypes: ['default'],
-            subagentTypes: [],
-            activeSubagents: 0,
             models: ['claude-sonnet-4.6', 'gpt-4.1'],
-            subagentModels: [],
-            sessionId: null,
-            stateCreatedAt: new Date().toISOString(),
-            lastUpdated: '',
-        };
+        });
         const marker = formatMarker(state);
         assert.strictEqual(marker, 'Impacted by AI (Agent mode: default | Model: claude-sonnet-4.6, gpt-4.1 | Prompts: 2)');
     });
 
     test('formatMarker with multiple agent types', () => {
-        const state: TrackerState = {
+        const state = makeState({
             promptCount: 1,
             subagentCount: 2,
             mainAgentTypes: ['default'],
             subagentTypes: ['Plan', 'Review'],
-            activeSubagents: 0,
-            models: [],
-            subagentModels: [],
-            sessionId: null,
-            stateCreatedAt: new Date().toISOString(),
-            lastUpdated: '',
-        };
+        });
         const marker = formatMarker(state);
         assert.strictEqual(marker, 'Impacted by AI (Agent mode: default | Prompts: 1 | Sub-agents mode: Plan, Review | sub-Agent prompts: 2)');
     });
 
     test('formatMarker with only prompts', () => {
-        const state: TrackerState = {
-            promptCount: 5,
-            subagentCount: 0,
-            mainAgentTypes: [],
-            subagentTypes: [],
-            activeSubagents: 0,
-            models: [],
-            subagentModels: [],
-            sessionId: null,
-            stateCreatedAt: new Date().toISOString(),
-            lastUpdated: '',
-        };
+        const state = makeState({ promptCount: 5 });
         const marker = formatMarker(state);
         assert.strictEqual(marker, 'Impacted by AI (Prompts: 5)');
     });
 
     test('formatMarker with no data returns base marker', () => {
-        const state: TrackerState = {
-            promptCount: 0,
-            subagentCount: 0,
-            mainAgentTypes: [],
-            subagentTypes: [],
-            activeSubagents: 0,
-            models: [],
-            subagentModels: [],
-            sessionId: null,
-            stateCreatedAt: new Date().toISOString(),
-            lastUpdated: '',
-        };
+        const state = makeState({});
         const marker = formatMarker(state);
         assert.strictEqual(marker, 'Impacted by AI');
     });
 
     test('formatMarker deduplicates agent types', () => {
-        const state: TrackerState = {
+        const state = makeState({
             promptCount: 1,
             subagentCount: 1,
-            mainAgentTypes: [],
             subagentTypes: ['Plan', 'Plan', 'Review'],
-            activeSubagents: 0,
-            models: [],
-            subagentModels: [],
-            sessionId: null,
-            stateCreatedAt: new Date().toISOString(),
-            lastUpdated: '',
-        };
+        });
         const marker = formatMarker(state);
         assert.ok(marker.includes('Sub-agents mode: Plan, Review'), 'Should deduplicate');
         assert.ok(!marker.includes('Plan, Plan'), 'Should not have duplicates');
     });
 
     test('formatMarker with only subagents and no user prompts', () => {
-        const state: TrackerState = {
-            promptCount: 0,
+        const state = makeState({
             subagentCount: 2,
-            mainAgentTypes: [],
             subagentTypes: ['Explore', 'Plan'],
-            activeSubagents: 0,
-            models: [],
-            subagentModels: [],
-            sessionId: null,
-            stateCreatedAt: new Date().toISOString(),
-            lastUpdated: '',
-        };
+        });
         const marker = formatMarker(state);
         assert.strictEqual(marker, 'Impacted by AI (Sub-agents mode: Explore, Plan | sub-Agent prompts: 2)');
+    });
+
+    test('formatMarker includes token counts per model when present', () => {
+        const state = makeState({
+            promptCount: 2,
+            mainAgentTypes: ['default'],
+            models: ['claude-sonnet-4.6'],
+            tokensByModel: {
+                'claude-sonnet-4-6': { inputTokens: 135000, outputTokens: 633, cachedTokens: 130000, reasoningTokens: 0 },
+                'gpt-4o-mini': { inputTokens: 5000, outputTokens: 200, cachedTokens: 0, reasoningTokens: 0 },
+            },
+        });
+        const marker = formatMarker(state);
+        assert.ok(marker.includes('Tokens:'), 'Should include Tokens field');
+        assert.ok(marker.includes('claude-sonnet-4-6:'), 'Should show claude model');
+        assert.ok(marker.includes('135k in/633 out'), 'Should format claude tokens');
+        assert.ok(marker.includes('130k cached'), 'Should include cached token count');
+        assert.ok(marker.includes('gpt-4o-mini:'), 'Should show gpt model');
+        assert.ok(marker.includes('5k in/200 out'), 'Should format gpt tokens');
+    });
+
+    test('formatMarker omits token section when tokensByModel is empty', () => {
+        const state = makeState({ promptCount: 1, mainAgentTypes: ['default'] });
+        const marker = formatMarker(state);
+        assert.ok(!marker.includes('Tokens:'), 'Should not include Tokens when no token data');
+    });
+
+    test('formatMarker includes reasoning tokens when present', () => {
+        const state = makeState({
+            promptCount: 1,
+            tokensByModel: {
+                'claude-opus-4-5': { inputTokens: 10000, outputTokens: 500, cachedTokens: 0, reasoningTokens: 1200 },
+            },
+        });
+        const marker = formatMarker(state);
+        assert.ok(marker.includes('+1k reasoning'), 'Should include reasoning tokens');
     });
 
     // ─── Transcript Parsing ────────────────────────────────────────────
