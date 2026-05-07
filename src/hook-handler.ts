@@ -42,6 +42,8 @@ export interface HookInput {
     // PreToolUse / PostToolUse
     tool_name?: string;
     tool_input?: Record<string, unknown>;
+    // CommitMsg (injected by commit-msg shell hook, not VS Code)
+    gitDir?: string;
 }
 
 export interface TrackerState {
@@ -605,6 +607,17 @@ function writeFlagEagerly(gitDir: string, state: TrackerState): void {
             const uniqueSubModels = [...new Set(state.subagentModels || [])];
             if (uniqueSubModels.length > 0) { agentParts.push(`sub-Agent models: ${uniqueSubModels.join(', ')}`); }
             if (state.subagentCount > 0) { agentParts.push(`sub-Agent prompts: ${state.subagentCount}`); }
+            const modelEntries = Object.entries(state.tokensByModel || {});
+            if (modelEntries.length > 0) {
+                const formatK = (n: number) => n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+                const modelParts = modelEntries.map(([model, t]) => {
+                    let s = `${model}: ${formatK(t.inputTokens)} in/${formatK(t.outputTokens)} out`;
+                    if (t.cachedTokens > 0) { s += ` (${formatK(t.cachedTokens)} cached)`; }
+                    if (t.reasoningTokens > 0) { s += ` +${formatK(t.reasoningTokens)} reasoning`; }
+                    return s;
+                });
+                agentParts.push(`Tokens: ${modelParts.join(' | ')}`);
+            }
             const combined = agentParts.length > 0
                 ? `Impacted by AI (Inline + ${agentParts.join(' | ')})`
                 : 'Impacted by AI (Inline)';
@@ -754,6 +767,17 @@ export function handleStop(input: HookInput, gitDir: string): void {
                 if (state.subagentCount > 0) {
                     agentParts.push(`sub-Agent prompts: ${state.subagentCount}`);
                 }
+                const inlineModelEntries = Object.entries(state.tokensByModel || {});
+                if (inlineModelEntries.length > 0) {
+                    const formatK = (n: number) => n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+                    const modelParts = inlineModelEntries.map(([model, t]) => {
+                        let s = `${model}: ${formatK(t.inputTokens)} in/${formatK(t.outputTokens)} out`;
+                        if (t.cachedTokens > 0) { s += ` (${formatK(t.cachedTokens)} cached)`; }
+                        if (t.reasoningTokens > 0) { s += ` +${formatK(t.reasoningTokens)} reasoning`; }
+                        return s;
+                    });
+                    agentParts.push(`Tokens: ${modelParts.join(' | ')}`);
+                }
                 const combined = agentParts.length > 0
                     ? `Impacted by AI (Inline + ${agentParts.join(' | ')})`
                     : 'Impacted by AI (Inline)';
@@ -774,10 +798,45 @@ export function handleStop(input: HookInput, gitDir: string): void {
     saveState(gitDir, state);
 }
 
+/**
+ * Called by the commit-msg shell hook before the flag is read.
+ * If the session is still in progress (Stop hasn't fired yet), queries OTEL
+ * for live token data and refreshes the AI_IMPACT_PENDING flag so that
+ * commits made during an active session include token counts.
+ */
+export function handleCommitMsg(input: HookInput, gitDir: string): void {
+    const state = loadState(gitDir);
+
+    // If Stop already ran and populated token data, nothing to do — flag is up to date
+    if (Object.keys(state.tokensByModel).length > 0) {
+        return;
+    }
+
+    // No session ID means no session to query
+    if (!state.sessionId) {
+        return;
+    }
+
+    // Query OTEL for live token usage (session still active, Stop hasn't fired)
+    const afterMs = new Date(state.stateCreatedAt).getTime();
+    const tokensByModel = queryTokensFromOtel(state.sessionId, afterMs);
+    if (!tokensByModel) {
+        return; // OTEL disabled or no data yet
+    }
+
+    state.tokensByModel = tokensByModel;
+    // Refresh the flag so the commit message includes token data
+    writeFlagEagerly(gitDir, state);
+    // Persist tokens in state for subsequent commits in the same session
+    saveState(gitDir, state);
+}
+
 // ─── Main Dispatch ───────────────────────────────────────────────────────────
 
 export function dispatch(input: HookInput): { continue: boolean } {
-    const gitDir = findGitDir(input.cwd);
+    // Allow the commit-msg shell hook to supply gitDir directly (avoids cwd resolution
+    // issues when the hook runs in Git's POSIX shell on Windows)
+    const gitDir = input.gitDir || findGitDir(input.cwd);
     if (!gitDir) {
         // Not a git repo — nothing to do
         return { continue: true };
@@ -801,6 +860,9 @@ export function dispatch(input: HookInput): { continue: boolean } {
             break;
         case 'Stop':
             handleStop(input, gitDir);
+            break;
+        case 'CommitMsg':
+            handleCommitMsg(input, gitDir);
             break;
         default:
             // Unknown event — ignore

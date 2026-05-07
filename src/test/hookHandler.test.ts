@@ -17,6 +17,7 @@ import {
     dispatch,
     getStatePath,
     getFlagPath,
+    handleCommitMsg,
 } from '../hook-handler';
 
 function runGit(args: string[], cwd: string): string {
@@ -563,6 +564,95 @@ suite('Hook Handler Tests', function () {
         // so just verify parseModelFromLogFile works with this content
         const result = parseModelFromLogFile(path.join(sessionDir, 'GitHub Copilot Chat.log'));
         assert.deepStrictEqual(result.models, ['gpt-4.1']);
+    });
+});
+
+suite('CommitMsg Tests', () => {
+    let tmpDir: string;
+    let gitDir: string;
+
+    setup(() => {
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-tracker-commitmsg-'));
+        gitDir = path.join(tmpDir, '.git');
+        fs.mkdirSync(gitDir, { recursive: true });
+    });
+
+    teardown(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    test('CommitMsg returns early when tokensByModel is already populated', () => {
+        // Stop already fired and wrote token data into state
+        const state = loadState(gitDir);
+        state.sessionId = 'test-session-123';
+        state.promptCount = 3;
+        state.mainAgentTypes = ['copilot'];
+        state.tokensByModel = {
+            'claude-sonnet-4-6': { inputTokens: 50000, outputTokens: 1000, cachedTokens: 40000, reasoningTokens: 0 }
+        };
+        saveState(gitDir, state);
+
+        // Write a flag without tokens (as if writeFlagEagerly ran before Stop)
+        const flagPath = getFlagPath(gitDir);
+        fs.writeFileSync(flagPath, 'Impacted by AI (Agent mode: copilot | Prompts: 3)');
+
+        handleCommitMsg({ timestamp: new Date().toISOString(), hookEventName: 'CommitMsg', cwd: tmpDir, gitDir }, gitDir);
+
+        // Flag should be unchanged — Stop already handled the token data
+        const flagContent = fs.readFileSync(flagPath, 'utf8');
+        assert.strictEqual(flagContent, 'Impacted by AI (Agent mode: copilot | Prompts: 3)',
+            'Flag should not be modified when tokensByModel already populated');
+    });
+
+    test('CommitMsg returns early when no sessionId in state', () => {
+        const state = loadState(gitDir);
+        state.promptCount = 2;
+        state.mainAgentTypes = ['copilot'];
+        state.sessionId = null; // No session ID
+        saveState(gitDir, state);
+
+        const flagPath = getFlagPath(gitDir);
+        fs.writeFileSync(flagPath, 'Impacted by AI (Agent mode: copilot | Prompts: 2)');
+
+        handleCommitMsg({ timestamp: new Date().toISOString(), hookEventName: 'CommitMsg', cwd: tmpDir, gitDir }, gitDir);
+
+        // Flag unchanged — no session to query OTEL with
+        const flagContent = fs.readFileSync(flagPath, 'utf8');
+        assert.strictEqual(flagContent, 'Impacted by AI (Agent mode: copilot | Prompts: 2)');
+    });
+
+    test('CommitMsg with empty tokensByModel and no OTEL DB leaves flag unchanged', () => {
+        // Session active, tokensByModel empty, but no DB available (queryTokensFromOtel returns null)
+        const state = loadState(gitDir);
+        state.sessionId = 'test-session-456';
+        state.promptCount = 5;
+        state.mainAgentTypes = ['copilot'];
+        saveState(gitDir, state);
+
+        const flagPath = getFlagPath(gitDir);
+        const originalFlag = 'Impacted by AI (Agent mode: copilot | Prompts: 5)';
+        fs.writeFileSync(flagPath, originalFlag);
+
+        // queryTokensFromOtel will return null since there's no real DB in tmpDir
+        handleCommitMsg({ timestamp: new Date().toISOString(), hookEventName: 'CommitMsg', cwd: tmpDir, gitDir }, gitDir);
+
+        // Flag unchanged — OTEL returned nothing
+        const flagContent = fs.readFileSync(flagPath, 'utf8');
+        assert.strictEqual(flagContent, originalFlag);
+    });
+
+    test('dispatch handles CommitMsg event without crashing', () => {
+        // Verifies CommitMsg is wired up in dispatch() and doesn't throw
+        const state = loadState(gitDir);
+        state.sessionId = 'test-session-789';
+        state.promptCount = 1;
+        state.mainAgentTypes = ['copilot'];
+        saveState(gitDir, state);
+
+        // Should complete without throwing even with no OTEL DB
+        assert.doesNotThrow(() => {
+            dispatch({ timestamp: new Date().toISOString(), hookEventName: 'CommitMsg', cwd: tmpDir, gitDir });
+        });
     });
 });
 
