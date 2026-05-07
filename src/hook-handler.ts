@@ -427,7 +427,7 @@ export function parseModelFromLogFile(filePath: string, afterTimestamp?: string)
             if (main && !models.includes(main[1])) { models.push(main[1]); continue; }
             // Sub-agent model: [tool/runSubagent*]
             const sub = line.match(/ccreq:[a-f0-9]+\.copilotmd \| success \| ([^\s]+?)(?:\s+->.*?)? \| \d+ms \| \[tool\/runSubagent[^\]]*\]/);
-            if (sub && !subagentModels.includes(sub[1])) { subagentModels.push(sub[1]); }
+            if (sub && !subagentModels.includes(sub[1]) && !models.includes(sub[1])) { subagentModels.push(sub[1]); }
         }
         return { models, subagentModels };
     } catch {

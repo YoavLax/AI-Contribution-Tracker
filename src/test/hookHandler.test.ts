@@ -557,7 +557,7 @@ suite('Hook Handler Tests', function () {
         const sessionDir = path.join(fakeLogsDir, '20260419T140000', 'window1', 'exthost', 'GitHub.copilot-chat');
         fs.mkdirSync(sessionDir, { recursive: true });
         fs.writeFileSync(path.join(sessionDir, 'GitHub Copilot Chat.log'),
-            '2026-04-19 14:00:00.000 [info] ccreq:xyz.copilotmd | success | gpt-4.1 -> gpt-41 | 3000ms | [panel/editAgent]\n');
+            '2026-04-19 14:00:00.000 [info] ccreq:abc.copilotmd | success | gpt-4.1 -> gpt-41 | 3000ms | [panel/editAgent]\n');
 
         // Monkeypatch: we can't easily inject the logsDir into dispatch/handleStop,
         // so just verify parseModelFromLogFile works with this content
