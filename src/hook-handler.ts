@@ -649,11 +649,13 @@ export function handleSessionStart(input: HookInput, gitDir: string): void {
 
 export function handleUserPromptSubmit(input: HookInput, gitDir: string): void {
     const state = loadState(gitDir);
-    // Only count as user prompt if no subagent is currently active
-    // VS Code fires UserPromptSubmit for subagent-delegated prompts too
-    if (state.activeSubagents > 0) {
-        // This is a subagent's internal prompt, skip counting
-    } else {
+    // Only count as user prompt if:
+    // 1. No subagent is currently active (VS Code fires UserPromptSubmit for subagent-delegated prompts too)
+    // 2. The prompt field is non-empty — VS Code also fires UserPromptSubmit for agentic
+    //    tool-result continuations (model re-invocations after a tool call), which have no
+    //    user-visible prompt text. Filtering on non-empty prompt avoids double-counting.
+    const hasUserText = typeof input.prompt === 'string' && input.prompt.trim().length > 0;
+    if (state.activeSubagents === 0 && hasUserText) {
         state.promptCount += 1;
         if (input.source && !state.mainAgentTypes.includes(input.source)) {
             state.mainAgentTypes.push(input.source);
