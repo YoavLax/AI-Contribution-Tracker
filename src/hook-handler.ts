@@ -55,6 +55,8 @@ export interface TrackerState {
     models: string[];
     subagentModels: string[];
     sessionId: string | null;
+    /** All session IDs that contributed since the last commit (for transcript reading) */
+    sessionIds: string[];
     stateCreatedAt: string;
     lastUpdated: string;
     // Token usage from OTEL SQLite DB (populated at Stop event), keyed by response model
@@ -101,6 +103,153 @@ export function findGitDir(cwd: string): string | null {
     }
 
     return null;
+}
+
+/**
+ * Fallback git dir resolution for when hook events arrive with a non-repo cwd
+ * (e.g. Copilot CLI running from C:\WINDOWS\system32).
+ *
+ * Reads the active-workspace.json file written by the VS Code extension, which
+ * lists all currently open workspace root paths. If exactly one is a git repo
+ * we use it. If there are multiple we pick the one with the most recent
+ * ai-tracker-state.json — i.e. the repo with live AI activity.
+ */
+export function findGitDirFromActiveWorkspace(): string | null {
+    try {
+        // hook-handler.js lives at: globalStorage/copilot-hooks/hook-handler.js
+        // active-workspace.json is at: globalStorage/active-workspace.json
+        const activeWorkspacePath = path.join(__dirname, '..', 'active-workspace.json');
+        if (!fs.existsSync(activeWorkspacePath)) { return null; }
+
+        const data = JSON.parse(fs.readFileSync(activeWorkspacePath, 'utf8')) as { workspaces?: string[] };
+        const workspaces: string[] = data.workspaces || [];
+        if (workspaces.length === 0) { return null; }
+
+        const candidates: Array<{ gitDir: string; mtime: number }> = [];
+        for (const ws of workspaces) {
+            const gitDir = findGitDir(ws);
+            if (!gitDir) { continue; }
+            const stateFile = path.join(gitDir, 'ai-tracker-state.json');
+            const mtime = fs.existsSync(stateFile)
+                ? fs.statSync(stateFile).mtimeMs
+                : 0;
+            candidates.push({ gitDir, mtime });
+        }
+
+        if (candidates.length === 0) { return null; }
+        // Prefer the repo with the most recently touched state file
+        candidates.sort((a, b) => b.mtime - a.mtime);
+        return candidates[0].gitDir;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * When commit-msg fires for a repo that has no accumulated state, check if
+ * state was accidentally written to another workspace (due to cwd fallback).
+ * If found, move it to the correct repo and clean up the source.
+ */
+function migrateStateFromOtherWorkspaces(targetGitDir: string): TrackerState | null {
+    try {
+        const activeWorkspacePath = path.join(__dirname, '..', 'active-workspace.json');
+        if (!fs.existsSync(activeWorkspacePath)) { return null; }
+
+        const data = JSON.parse(fs.readFileSync(activeWorkspacePath, 'utf8')) as { workspaces?: string[] };
+        const workspaces = data.workspaces || [];
+
+        const targetNorm = path.normalize(targetGitDir).toLowerCase();
+        let bestState: TrackerState | null = null;
+        let bestMtime = 0;
+        let bestGitDir: string | null = null;
+
+        for (const ws of workspaces) {
+            const gitDir = findGitDir(ws);
+            if (!gitDir) { continue; }
+            if (path.normalize(gitDir).toLowerCase() === targetNorm) { continue; }
+
+            const stateFile = path.join(gitDir, 'ai-tracker-state.json');
+            if (!fs.existsSync(stateFile)) { continue; }
+
+            const mtime = fs.statSync(stateFile).mtimeMs;
+            const state = loadState(gitDir);
+            // Only consider state that has actual activity
+            if (state.promptCount === 0 && state.mainAgentTypes.length === 0) { continue; }
+
+            if (mtime > bestMtime) {
+                bestMtime = mtime;
+                bestState = state;
+                bestGitDir = gitDir;
+            }
+        }
+
+        if (bestState && bestGitDir) {
+            // Move state to the correct repo
+            saveState(targetGitDir, bestState);
+            writeFlagEagerly(targetGitDir, bestState);
+            // Clean up the misplaced state
+            const wrongStateFile = path.join(bestGitDir, 'ai-tracker-state.json');
+            const wrongFlagFile = path.join(bestGitDir, 'AI_IMPACT_PENDING');
+            try { fs.unlinkSync(wrongStateFile); } catch { /* ok */ }
+            try { fs.unlinkSync(wrongFlagFile); } catch { /* ok */ }
+            return bestState;
+        }
+    } catch { /* best effort */ }
+    return null;
+}
+
+// ─── Pending State (CLI events with no gitDir) ──────────────────────────────
+
+/**
+ * Returns a directory in globalStorage used to accumulate state from hook events
+ * that arrive without a valid git repo context (e.g. Copilot CLI with cwd=homedir).
+ * At CommitMsg time, this pending state is consumed and moved to the correct repo.
+ */
+export function getPendingStateDir(): string {
+    const dir = path.join(__dirname, '..', 'pending');
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    return dir;
+}
+
+// ─── Session-to-Repo Mapping ─────────────────────────────────────────────────
+
+const SESSION_MAP_FILENAME = 'session-repo-map.json';
+
+function getSessionMapPath(): string {
+    return path.join(__dirname, '..', SESSION_MAP_FILENAME);
+}
+
+function saveSessionRepo(sessionId: string, gitDir: string): void {
+    try {
+        const mapPath = getSessionMapPath();
+        let map: Record<string, string> = {};
+        if (fs.existsSync(mapPath)) {
+            map = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+        }
+        map[sessionId] = gitDir;
+        fs.writeFileSync(mapPath, JSON.stringify(map));
+    } catch { /* best effort */ }
+}
+
+function lookupSessionRepo(sessionId: string): string | null {
+    try {
+        const mapPath = getSessionMapPath();
+        if (!fs.existsSync(mapPath)) { return null; }
+        const map = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+        return map[sessionId] || null;
+    } catch { return null; }
+}
+
+function clearSessionRepo(sessionId: string): void {
+    try {
+        const mapPath = getSessionMapPath();
+        if (!fs.existsSync(mapPath)) { return; }
+        const map = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+        delete map[sessionId];
+        fs.writeFileSync(mapPath, JSON.stringify(map));
+    } catch { /* best effort */ }
 }
 
 // ─── State Management ────────────────────────────────────────────────────────
@@ -154,6 +303,9 @@ export function loadState(gitDir: string): TrackerState {
             if (typeof parsed.sessionId !== 'string') {
                 parsed.sessionId = null;
             }
+            if (!Array.isArray(parsed.sessionIds)) {
+                parsed.sessionIds = parsed.sessionId ? [parsed.sessionId] : [];
+            }
             if (!Array.isArray(parsed.subagentModels)) {
                 parsed.subagentModels = [];
             }
@@ -188,6 +340,7 @@ export function loadState(gitDir: string): TrackerState {
         models: [],
         subagentModels: [],
         sessionId: null,
+        sessionIds: [],
         stateCreatedAt: new Date().toISOString(),
         lastUpdated: new Date().toISOString(),
         tokensByModel: {},
@@ -289,6 +442,72 @@ function findModelInObject(obj: unknown, depth: number = 0): string | null {
     }
 
     return null;
+}
+
+// ─── Copilot CLI Transcript Parsing ──────────────────────────────────────────
+
+/**
+ * Extract model and token data from a Copilot CLI session transcript.
+ * The transcript is at ~/.copilot/session-state/<session_id>/events.jsonl
+ * and is written incrementally during the session.
+ *
+ * At CommitMsg time (before Stop fires), we can get:
+ * - Model name from session.model_change event (written at session start)
+ * - Model name from assistant.message entries
+ *
+ * At Stop time, session.shutdown has full token breakdown per model.
+ */
+export function extractFromCliTranscript(sessionId: string, transcriptPath?: string): {
+    models: string[];
+    tokensByModel: Record<string, TokenTotals>;
+} {
+    const result: { models: string[]; tokensByModel: Record<string, TokenTotals> } = {
+        models: [],
+        tokensByModel: {},
+    };
+
+    // Derive transcript path from session ID if not provided
+    const tp = transcriptPath || path.join(os.homedir(), '.copilot', 'session-state', sessionId, 'events.jsonl');
+    if (!fs.existsSync(tp)) { return result; }
+
+    try {
+        const content = fs.readFileSync(tp, 'utf8');
+        for (const line of content.split('\n')) {
+            if (!line.trim()) { continue; }
+            try {
+                const entry = JSON.parse(line);
+                // Model from session.model_change
+                if (entry.type === 'session.model_change' && entry.data?.newModel) {
+                    const model = entry.data.newModel;
+                    if (!result.models.includes(model)) { result.models.push(model); }
+                }
+                // Model from assistant.message
+                if (entry.type === 'assistant.message' && entry.data?.model) {
+                    const model = entry.data.model;
+                    if (!result.models.includes(model)) { result.models.push(model); }
+                }
+                // Full metrics from session.shutdown (only available after Stop)
+                if (entry.type === 'session.shutdown' && entry.data?.modelMetrics) {
+                    const metrics = entry.data.modelMetrics as Record<string, {
+                        usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; reasoningTokens?: number };
+                    }>;
+                    for (const [model, data] of Object.entries(metrics)) {
+                        if (data.usage) {
+                            result.tokensByModel[model] = {
+                                inputTokens: data.usage.inputTokens || 0,
+                                outputTokens: data.usage.outputTokens || 0,
+                                cachedTokens: data.usage.cacheReadTokens || 0,
+                                reasoningTokens: data.usage.reasoningTokens || 0,
+                            };
+                            if (!result.models.includes(model)) { result.models.push(model); }
+                        }
+                    }
+                }
+            } catch { /* skip unparseable lines */ }
+        }
+    } catch { /* best effort */ }
+
+    return result;
 }
 
 // ─── Copilot Chat Log Parsing ────────────────────────────────────────────────
@@ -640,15 +859,23 @@ export function handleSessionStart(input: HookInput, gitDir: string): void {
     const sid = input.sessionId || input.session_id;
     if (sid) {
         state.sessionId = sid;
+        // Track all sessions since last commit for transcript reading
+        if (!state.sessionIds.includes(sid)) {
+            state.sessionIds.push(sid);
+        }
     }
-    if (input.source && !state.mainAgentTypes.includes(input.source)) {
-        state.mainAgentTypes.push(input.source);
+    // Normalize source: Copilot CLI reports "new" but we label it "copilot" for clarity
+    const source = input.source === 'new' ? 'copilot' : input.source;
+    if (source && !state.mainAgentTypes.includes(source)) {
+        state.mainAgentTypes.push(source);
     }
     saveState(gitDir, state);
 }
 
 export function handleUserPromptSubmit(input: HookInput, gitDir: string): void {
     const state = loadState(gitDir);
+    // Normalize source: Copilot CLI reports "new" but we label it "copilot" for clarity
+    const source = input.source === 'new' ? 'copilot' : input.source;
     // Only count as user prompt if:
     // 1. No subagent is currently active (VS Code fires UserPromptSubmit for subagent-delegated prompts too)
     // 2. The prompt field is non-empty — VS Code also fires UserPromptSubmit for agentic
@@ -657,8 +884,8 @@ export function handleUserPromptSubmit(input: HookInput, gitDir: string): void {
     const hasUserText = typeof input.prompt === 'string' && input.prompt.trim().length > 0;
     if (state.activeSubagents === 0 && hasUserText) {
         state.promptCount += 1;
-        if (input.source && !state.mainAgentTypes.includes(input.source)) {
-            state.mainAgentTypes.push(input.source);
+        if (source && !state.mainAgentTypes.includes(source)) {
+            state.mainAgentTypes.push(source);
         }
     }
     saveState(gitDir, state);
@@ -680,6 +907,15 @@ export function handleSubagentStop(input: HookInput, gitDir: string): void {
     const state = loadState(gitDir);
     if (state.activeSubagents > 0) {
         state.activeSubagents -= 1;
+    } else {
+        // SubagentStart was never received for this agent — count it here instead
+        state.subagentCount += 1;
+    }
+    // Capture agent_type here too in case SubagentStart was missed or routed elsewhere
+    if (input.agent_type) {
+        if (!state.subagentTypes.includes(input.agent_type)) {
+            state.subagentTypes.push(input.agent_type);
+        }
     }
     saveState(gitDir, state);
     // Eagerly write flag so it's present if a commit happens before Stop fires
@@ -689,7 +925,23 @@ export function handleSubagentStop(input: HookInput, gitDir: string): void {
 export function handleStop(input: HookInput, gitDir: string): void {
     const state = loadState(gitDir);
 
-    // Extract metadata from transcript (best effort)
+    // Extract metadata from Copilot CLI transcript (includes full token data at shutdown)
+    const sessionId = input.sessionId || input.session_id || state.sessionId;
+    if (sessionId) {
+        const cliData = extractFromCliTranscript(sessionId, input.transcript_path || undefined);
+        for (const m of cliData.models) {
+            if (!state.models.includes(m)) { state.models.push(m); }
+        }
+        // Merge token data from CLI transcript (session.shutdown has authoritative totals)
+        if (Object.keys(cliData.tokensByModel).length > 0) {
+            for (const [model, t] of Object.entries(cliData.tokensByModel)) {
+                // CLI transcript is authoritative — overwrite any partial data
+                state.tokensByModel[model] = t;
+            }
+        }
+    }
+
+    // Legacy: Extract metadata from transcript via generic parser
     if (input.transcript_path) {
         const meta = extractTranscriptMetadata(input.transcript_path);
         if (meta.model && !state.models.includes(meta.model)) {
@@ -705,7 +957,6 @@ export function handleStop(input: HookInput, gitDir: string): void {
 
     // Add any models found in the VS Code Copilot Chat log file (scoped to session by session_id)
     // Use stateCreatedAt as cutoff so we only pick up models used since the state was (re)created
-    const sessionId = input.sessionId || input.session_id || state.sessionId;
     const afterTs = isoToLogTimestamp(state.stateCreatedAt);
     const logModels = extractModelFromCopilotLog(undefined, sessionId, afterTs);
     for (const m of logModels.models) {
@@ -718,10 +969,9 @@ export function handleStop(input: HookInput, gitDir: string): void {
     // Query OTEL SQLite DB for actual token usage (requires dbSpanExporter.enabled)
     // Accumulate into tokensByModel so multi-session commits show full totals
     // Scope to spans after stateCreatedAt so previous sessions/commits don't bleed in
-    const otelSessionId = input.sessionId || input.session_id || state.sessionId;
-    if (otelSessionId) {
+    if (sessionId) {
         const afterMs = new Date(state.stateCreatedAt).getTime();
-        const tokensByModel = queryTokensFromOtel(otelSessionId, afterMs);
+        const tokensByModel = queryTokensFromOtel(sessionId, afterMs);
         if (tokensByModel) {
             for (const [model, t] of Object.entries(tokensByModel)) {
                 const existing = state.tokensByModel[model];
@@ -798,6 +1048,34 @@ export function handleStop(input: HookInput, gitDir: string): void {
 
     // Save final state (keeps accumulating until commit-msg hook cleans up)
     saveState(gitDir, state);
+
+    // Clean up session-to-repo mapping
+    const stopSessionId = input.sessionId || input.session_id || state.sessionId || '';
+    if (stopSessionId) { clearSessionRepo(stopSessionId); }
+}
+
+/**
+ * Reset state after a commit has consumed it. Preserves session routing fields
+ * so that late-arriving Stop events (with tokens) can still be routed correctly.
+ * The next commit will only see data accumulated after this reset.
+ */
+function resetStateAfterCommit(gitDir: string, currentState: TrackerState): void {
+    const now = new Date().toISOString();
+    const resetState: TrackerState = {
+        promptCount: 0,
+        subagentCount: 0,
+        mainAgentTypes: [],
+        subagentTypes: [],
+        activeSubagents: currentState.activeSubagents, // preserve for in-flight subagent tracking
+        models: [],
+        subagentModels: [],
+        sessionId: '',                                   // cleared: consumed. Stop uses saveSessionRepo for routing.
+        sessionIds: [],                                // consumed; new sessions will re-register
+        stateCreatedAt: now,                           // next commit only sees data after this point
+        lastUpdated: now,
+        tokensByModel: {},
+    };
+    saveState(gitDir, resetState);
 }
 
 /**
@@ -807,30 +1085,125 @@ export function handleStop(input: HookInput, gitDir: string): void {
  * commits made during an active session include token counts.
  */
 export function handleCommitMsg(input: HookInput, gitDir: string): void {
-    const state = loadState(gitDir);
+    let state = loadState(gitDir);
 
-    // If Stop already ran and populated token data, nothing to do — flag is up to date
+    // If local state is empty, check for pending state from Copilot CLI events
+    // that arrived with no git repo context (cwd was homedir/system32).
+    if (state.promptCount === 0 && state.mainAgentTypes.length === 0) {
+        const pendingDir = getPendingStateDir();
+        const pendingStatePath = getStatePath(pendingDir);
+        if (fs.existsSync(pendingStatePath)) {
+            const pendingState = loadState(pendingDir);
+            if (pendingState.promptCount > 0 || pendingState.mainAgentTypes.length > 0 ||
+                pendingState.subagentCount > 0 || pendingState.subagentTypes.length > 0) {
+                // Merge pending models into existing local state (if any)
+                // then override with pending counts/types
+                state = pendingState;
+                if (state.models.length === 0) {
+                    // Preserve any models extracted by a previous Stop event
+                    const localModels = loadState(gitDir).models;
+                    if (localModels.length > 0) {
+                        state.models = localModels;
+                    }
+                }
+                saveState(gitDir, state);
+                writeFlagEagerly(gitDir, state);
+            }
+            // Clean up pending state (consumed or empty)
+            try { fs.unlinkSync(pendingStatePath); } catch { /* ok */ }
+            try { fs.unlinkSync(getFlagPath(pendingDir)); } catch { /* ok */ }
+        }
+    }
+
+    // Legacy fallback: if still empty, check if state was misplaced in another
+    // workspace (can happen with older versions of the hook handler)
+    if (state.promptCount === 0 && state.mainAgentTypes.length === 0) {
+        const migrated = migrateStateFromOtherWorkspaces(gitDir);
+        if (migrated) {
+            state = migrated;
+        }
+    }
+
+    // If Stop already ran and populated token data, refresh flag and reset
     if (Object.keys(state.tokensByModel).length > 0) {
+        fs.writeFileSync(getFlagPath(gitDir), formatMarker(state));
+        resetStateAfterCommit(gitDir, state);
         return;
     }
 
-    // No session ID means no session to query
+    // No session ID means no session to query — refresh flag with current state and reset
     if (!state.sessionId) {
+        if (state.promptCount > 0 || state.mainAgentTypes.length > 0 ||
+            state.subagentCount > 0 || state.subagentTypes.length > 0) {
+            fs.writeFileSync(getFlagPath(gitDir), formatMarker(state));
+        }
+        resetStateAfterCommit(gitDir, state);
         return;
+    }
+
+    let stateChanged = false;
+
+    // Extract model/tokens from Copilot CLI transcripts (all sessions since last commit)
+    // Each session has its own transcript at ~/.copilot/session-state/<id>/events.jsonl
+    const transcriptSessionIds = state.sessionIds.length > 0 ? state.sessionIds :
+        (state.sessionId ? [state.sessionId] : []);
+    for (const sid of transcriptSessionIds) {
+        const cliData = extractFromCliTranscript(sid);
+        for (const m of cliData.models) {
+            if (!state.models.includes(m)) { state.models.push(m); stateChanged = true; }
+        }
+        // Merge tokens (accumulate across sessions)
+        for (const [model, t] of Object.entries(cliData.tokensByModel)) {
+            const existing = state.tokensByModel[model];
+            if (existing) {
+                existing.inputTokens += t.inputTokens;
+                existing.outputTokens += t.outputTokens;
+                existing.cachedTokens += t.cachedTokens;
+                existing.reasoningTokens += t.reasoningTokens;
+            } else {
+                state.tokensByModel[model] = { ...t };
+            }
+            stateChanged = true;
+        }
+    }
+
+    // Fallback: Extract models from VS Code Copilot Chat log
+    if (state.models.length === 0 && state.sessionId) {
+        const afterTs = isoToLogTimestamp(state.stateCreatedAt);
+        const logModels = extractModelFromCopilotLog(undefined, state.sessionId, afterTs);
+        for (const m of logModels.models) {
+            if (!state.models.includes(m)) { state.models.push(m); stateChanged = true; }
+        }
+        for (const m of logModels.subagentModels) {
+            if (!state.subagentModels.includes(m)) { state.subagentModels.push(m); stateChanged = true; }
+        }
     }
 
     // Query OTEL for live token usage (session still active, Stop hasn't fired)
     const afterMs = new Date(state.stateCreatedAt).getTime();
     const tokensByModel = queryTokensFromOtel(state.sessionId, afterMs);
-    if (!tokensByModel) {
-        return; // OTEL disabled or no data yet
+    if (tokensByModel) {
+        state.tokensByModel = tokensByModel;
+        stateChanged = true;
     }
 
-    state.tokensByModel = tokensByModel;
-    // Refresh the flag so the commit message includes token data
-    writeFlagEagerly(gitDir, state);
-    // Persist tokens in state for subsequent commits in the same session
-    saveState(gitDir, state);
+    if (stateChanged) {
+        // Persist in state for subsequent commits in the same session
+        saveState(gitDir, state);
+    }
+
+    // Always ensure the flag reflects the final accumulated state.
+    // Earlier eager writes (from UserPromptSubmit) may be stale if SessionStart
+    // added mainAgentTypes or if model/token data was just extracted above.
+    if (state.promptCount > 0 || state.mainAgentTypes.length > 0 ||
+        state.subagentCount > 0 || state.subagentTypes.length > 0 ||
+        Object.keys(state.tokensByModel).length > 0) {
+        const flagPath = getFlagPath(gitDir);
+        fs.writeFileSync(flagPath, formatMarker(state));
+    }
+
+    // Reset state — data consumed by this commit
+    resetStateAfterCommit(gitDir, state);
 }
 
 // ─── Main Dispatch ───────────────────────────────────────────────────────────
@@ -838,33 +1211,48 @@ export function handleCommitMsg(input: HookInput, gitDir: string): void {
 export function dispatch(input: HookInput): { continue: boolean } {
     // Allow the commit-msg shell hook to supply gitDir directly (avoids cwd resolution
     // issues when the hook runs in Git's POSIX shell on Windows)
-    const gitDir = input.gitDir || findGitDir(input.cwd);
-    if (!gitDir) {
-        // Not a git repo — nothing to do
-        return { continue: true };
+    let gitDir = input.gitDir || findGitDir(input.cwd);
+    const sessionId = input.sessionId || input.session_id || '';
+
+    // Fallback: Check session-to-repo mapping
+    if (!gitDir && sessionId) {
+        gitDir = lookupSessionRepo(sessionId);
+    }
+
+    // If we resolved gitDir directly from cwd or session-map, save it
+    if (gitDir && sessionId) {
+        saveSessionRepo(sessionId, gitDir);
     }
 
     // Normalize: VS Code sends snake_case, docs show camelCase — accept both
     const eventName = input.hookEventName || input.hook_event_name || '';
 
+    // For non-CommitMsg events without a git repo: store in pending state.
+    // This happens when Copilot CLI fires events from homedir/system32.
+    // The pending state will be consumed at CommitMsg time when the correct
+    // repo is known from the commit-msg shell hook.
+    const targetDir = gitDir || getPendingStateDir();
+
     switch (eventName) {
         case 'SessionStart':
-            handleSessionStart(input, gitDir);
+            handleSessionStart(input, targetDir);
             break;
         case 'UserPromptSubmit':
-            handleUserPromptSubmit(input, gitDir);
+            handleUserPromptSubmit(input, targetDir);
             break;
         case 'SubagentStart':
-            handleSubagentStart(input, gitDir);
+            handleSubagentStart(input, targetDir);
             break;
         case 'SubagentStop':
-            handleSubagentStop(input, gitDir);
+            handleSubagentStop(input, targetDir);
             break;
         case 'Stop':
-            handleStop(input, gitDir);
+            handleStop(input, targetDir);
             break;
         case 'CommitMsg':
-            handleCommitMsg(input, gitDir);
+            if (gitDir) {
+                handleCommitMsg(input, gitDir);
+            }
             break;
         default:
             // Unknown event — ignore
@@ -887,6 +1275,14 @@ function main(): void {
     process.stdin.on('end', () => {
         try {
             const input: HookInput = JSON.parse(inputData);
+            // Debug log: record full raw payload for diagnostics
+            try {
+                const debugLogPath = path.join(os.tmpdir(), 'ai-commit-tracker-debug.log');
+                const eventName = input.hookEventName || input.hook_event_name || '?';
+                // Log full raw JSON for discovery of available fields
+                const logLine = `[${new Date().toISOString()}] ${eventName} ${inputData.trim()}\n`;
+                fs.appendFileSync(debugLogPath, logLine);
+            } catch { /* never break hook execution for logging */ }
             const result = dispatch(input);
             process.stdout.write(JSON.stringify(result));
             process.exit(0);

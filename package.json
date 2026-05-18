@@ -60,8 +60,27 @@
       {
         "command": "copilotInsightTracker.acceptNextLine",
         "title": "Accept Next Line of Inline Suggestion (Tracked)"
+      },
+      {
+        "command": "aiTracker.removeClaudeCodeHooks",
+        "title": "AI Tracker: Remove Claude Code Hooks"
       }
     ],
+    "configuration": {
+      "title": "AI Contribution Tracker",
+      "properties": {
+        "aiTracker.enableClaudeCodeHooks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically register AI tracking hooks with Claude Code (~/.claude/settings.json)"
+        },
+        "aiTracker.enableCopilotCliHooks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Register AI tracking hooks for Copilot CLI (~/.copilot/hooks/)"
+        }
+      }
+    },
     "keybindings": [
       {
         "command": "copilotInsightTracker.acceptInlineSuggestion",

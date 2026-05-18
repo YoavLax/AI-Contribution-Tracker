@@ -31,6 +31,14 @@ export function activate(context: vscode.ExtensionContext) {
     // Setup Copilot agent hooks
     setupCopilotHooks(context);
 
+    // Setup Claude Code hooks (if Claude Code is installed)
+    setupClaudeCodeHooks(context);
+
+    // Register cleanup command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('aiTracker.removeClaudeCodeHooks', () => removeClaudeCodeHooks())
+    );
+
     // Remove stale per-repo hook configs left by older extension versions
     cleanupLegacyRepoHooks();
 
@@ -57,6 +65,13 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
 	context.subscriptions.push(disposable);
+
+    // Write active workspace git dirs so the hook-handler can find the repo
+    // even when Copilot CLI / Claude Code fire hooks from a non-repo cwd.
+    setupActiveWorkspaceFile(context);
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeWorkspaceFolders(() => setupActiveWorkspaceFile(context))
+    );
     
     return { tracker };
 }
@@ -129,9 +144,11 @@ if [ -z "$NODE_BIN" ]; then
     exit 127
 fi
 
-# If a session is in progress, refresh the flag with live OTEL token data.
-# This ensures token counts appear even when the commit happens before Stop fires.
-if [ -f "$STATE_FILE" ] && [ -f "$HOOK_HANDLER" ]; then
+# Invoke hook-handler to refresh/migrate state and write the flag.
+# Always run (not just when STATE_FILE exists locally) because state may have
+# been accumulated in a different repo due to cwd fallback, and CommitMsg
+# handles migration to the correct repo.
+if [ -f "$HOOK_HANDLER" ]; then
     GIT_ABS_DIR=$(git rev-parse --absolute-git-dir)
     printf '{"hookEventName":"CommitMsg","cwd":".","gitDir":"%s"}' "$GIT_ABS_DIR" | "$NODE_BIN" "$HOOK_HANDLER" > /dev/null 2>&1 || true
 fi
@@ -142,6 +159,11 @@ if [ -f "$IMPACT_FLAG" ]; then
         MARKER="Impacted by AI"
     fi
     if ! grep -qF "$MARKER" "$1"; then
+        # Ensure a blank line separator before the marker.
+        # If file doesn't end with a newline, add one first.
+        if [ -s "$1" ] && [ "$(tail -c 1 "$1" | wc -l)" -eq 0 ]; then
+            echo "" >> "$1"
+        fi
         echo "" >> "$1"
         echo "$MARKER" >> "$1"
     fi
@@ -316,6 +338,7 @@ function setupCopilotHooks(context: vscode.ExtensionContext): void {
         }
 
         const hookConfig = {
+            version: 1,
             hooks: {
                 SessionStart: [{
                     type: 'command',
@@ -393,6 +416,215 @@ function setupCopilotHooks(context: vscode.ExtensionContext): void {
     }
 }
 
+/**
+ * Setup Claude Code hooks in ~/.claude/settings.json
+ * Claude Code uses a nested hook format: hooks.EventName -> [{ hooks: [{ type, command }] }]
+ */
+function setupClaudeCodeHooks(context: vscode.ExtensionContext): void {
+    try {
+        const config = vscode.workspace.getConfiguration('aiTracker');
+        if (!config.get<boolean>('enableClaudeCodeHooks', true)) {
+            logger.appendLine('[Setup] Claude Code hooks disabled by configuration');
+            return;
+        }
+
+        const userHome = os.homedir();
+        const claudeDir = path.join(userHome, '.claude');
+
+        // Skip if Claude Code is not installed
+        if (!fs.existsSync(claudeDir)) {
+            logger.appendLine('[Setup] ~/.claude/ not found — skipping Claude Code hooks setup');
+            return;
+        }
+
+        // Ensure hook-handler.js is already installed (setupCopilotHooks does this)
+        const hookHandlerDir = path.join(context.globalStorageUri.fsPath, 'copilot-hooks');
+        const installedHandler = path.join(hookHandlerDir, 'hook-handler.js');
+        if (!fs.existsSync(installedHandler)) {
+            logger.appendLine('[Setup] hook-handler.js not yet installed — skipping Claude Code hooks');
+            return;
+        }
+
+        const settingsPath = path.join(claudeDir, 'settings.json');
+        let settings: Record<string, unknown> = {};
+
+        // Read existing settings
+        if (fs.existsSync(settingsPath)) {
+            try {
+                const raw = fs.readFileSync(settingsPath, 'utf8');
+                settings = JSON.parse(raw) as Record<string, unknown>;
+            } catch (e) {
+                logger.appendLine(`[Setup] WARNING: Could not parse ~/.claude/settings.json: ${e}`);
+                // Create backup of corrupted file
+                const backupPath = settingsPath + '.bak';
+                fs.copyFileSync(settingsPath, backupPath);
+                logger.appendLine(`[Setup] Backed up corrupted settings to: ${backupPath}`);
+                settings = {};
+            }
+        }
+
+        // Build command string
+        const handlerPathPosix = installedHandler.replace(/\\/g, '/');
+        const command = `node "${handlerPathPosix}"`;
+
+        // Events we track
+        const trackedEvents = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'Stop'];
+
+        // Get or create hooks object
+        let hooks = settings.hooks as Record<string, unknown[]> | undefined;
+        if (!hooks || typeof hooks !== 'object') {
+            hooks = {};
+        }
+
+        let modified = false;
+
+        for (const eventName of trackedEvents) {
+            const eventHooks = hooks[eventName] as Array<{ hooks?: Array<{ type?: string; command?: string; timeout?: number; [key: string]: unknown }> }> | undefined;
+
+            if (!eventHooks || !Array.isArray(eventHooks)) {
+                // No hooks for this event — add ours
+                hooks[eventName] = [{
+                    hooks: [{
+                        type: 'command',
+                        command: command,
+                        timeout: eventName === 'Stop' ? 15 : 10
+                    }]
+                }];
+                modified = true;
+                continue;
+            }
+
+            // Check if our handler is already registered
+            let found = false;
+            for (const matcherGroup of eventHooks) {
+                if (!matcherGroup.hooks || !Array.isArray(matcherGroup.hooks)) { continue; }
+                for (let i = 0; i < matcherGroup.hooks.length; i++) {
+                    const handler = matcherGroup.hooks[i];
+                    if (handler.command && handler.command.includes('hook-handler.js')) {
+                        // Update command path in case handler was reinstalled
+                        if (handler.command !== command) {
+                            matcherGroup.hooks[i] = {
+                                ...handler,
+                                command: command
+                            };
+                            modified = true;
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) { break; }
+            }
+
+            if (!found) {
+                // Append our matcher group
+                eventHooks.push({
+                    hooks: [{
+                        type: 'command',
+                        command: command,
+                        timeout: eventName === 'Stop' ? 15 : 10
+                    }]
+                });
+                modified = true;
+            }
+        }
+
+        if (modified) {
+            // Backup existing settings on first modification
+            const backupPath = settingsPath + '.bak';
+            if (fs.existsSync(settingsPath) && !fs.existsSync(backupPath)) {
+                fs.copyFileSync(settingsPath, backupPath);
+                logger.appendLine(`[Setup] Backed up ~/.claude/settings.json to: ${backupPath}`);
+            }
+
+            settings.hooks = hooks;
+            fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+            logger.appendLine('[Setup] \u2713 Claude Code hooks written to ~/.claude/settings.json');
+            logger.appendLine(`[Setup] Tracking events: ${trackedEvents.join(', ')}`);
+        } else {
+            logger.appendLine('[Setup] Claude Code hooks already configured — no changes needed');
+        }
+
+    } catch (error) {
+        logger.appendLine(`[Setup] ERROR setting up Claude Code hooks: ${error}`);
+    }
+}
+
+/**
+ * Remove AI Tracker hooks from ~/.claude/settings.json
+ */
+function removeClaudeCodeHooks(): void {
+    try {
+        const userHome = os.homedir();
+        const settingsPath = path.join(userHome, '.claude', 'settings.json');
+
+        if (!fs.existsSync(settingsPath)) {
+            vscode.window.showInformationMessage('No Claude Code settings found — nothing to remove.');
+            return;
+        }
+
+        const raw = fs.readFileSync(settingsPath, 'utf8');
+        const settings = JSON.parse(raw) as Record<string, unknown>;
+        const hooks = settings.hooks as Record<string, unknown[]> | undefined;
+
+        if (!hooks || typeof hooks !== 'object') {
+            vscode.window.showInformationMessage('No hooks found in Claude Code settings.');
+            return;
+        }
+
+        let removed = false;
+        const trackedEvents = ['SessionStart', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'Stop'];
+
+        for (const eventName of trackedEvents) {
+            const eventHooks = hooks[eventName] as Array<{ hooks?: Array<{ command?: string }> }> | undefined;
+            if (!eventHooks || !Array.isArray(eventHooks)) { continue; }
+
+            // Filter out matcher groups that only contain our handler
+            const filtered = eventHooks.filter(matcherGroup => {
+                if (!matcherGroup.hooks || !Array.isArray(matcherGroup.hooks)) { return true; }
+                // Remove our handlers from this group
+                const remaining = matcherGroup.hooks.filter(
+                    h => !h.command || !h.command.includes('hook-handler.js')
+                );
+                if (remaining.length === 0) {
+                    // Entire matcher group was only ours — remove it
+                    removed = true;
+                    return false;
+                }
+                if (remaining.length < matcherGroup.hooks.length) {
+                    matcherGroup.hooks = remaining;
+                    removed = true;
+                }
+                return true;
+            });
+
+            if (filtered.length === 0) {
+                delete hooks[eventName];
+            } else {
+                hooks[eventName] = filtered;
+            }
+        }
+
+        if (removed) {
+            // Remove hooks key entirely if empty
+            if (Object.keys(hooks).length === 0) {
+                delete settings.hooks;
+            } else {
+                settings.hooks = hooks;
+            }
+            fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+            vscode.window.showInformationMessage('AI Tracker hooks removed from Claude Code settings.');
+            logger.appendLine('[Cleanup] Removed AI Tracker hooks from ~/.claude/settings.json');
+        } else {
+            vscode.window.showInformationMessage('No AI Tracker hooks found in Claude Code settings.');
+        }
+
+    } catch (error) {
+        logger.appendLine(`[Cleanup] ERROR removing Claude Code hooks: ${error}`);
+        vscode.window.showErrorMessage(`Failed to remove Claude Code hooks: ${error}`);
+    }
+}
+
 function ensureAICoAuthorSetting(): void {
     try {
         const gitConfig = vscode.workspace.getConfiguration('git');
@@ -436,6 +668,7 @@ function ensureOtelDbSpanExporter(): void {
 }
 
 /**
+/**
  * Remove stale per-repo hook config files left behind by older versions of the extension.
  * Older versions wrote .github/hooks/ai-commit-tracker.json into each workspace folder.
  * Now that hooks are global (~/.copilot/hooks/), per-repo copies cause the handler to
@@ -462,6 +695,43 @@ function cleanupLegacyRepoHooks(): void {
                 // Non-critical — ignore errors (e.g. read-only filesystem)
             }
         }
+    }
+}
+
+/**
+ * Write the git dirs of all open workspace folders to a well-known file in
+ * globalStorage so that the hook-handler can locate the correct repo even
+ * when Copilot CLI / Claude Code fire hooks from a non-repo cwd (e.g. C:\WINDOWS\system32).
+ */
+function setupActiveWorkspaceFile(context: vscode.ExtensionContext): void {
+    try {
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) { return; }
+
+        const gitDirs: string[] = [];
+        for (const folder of folders) {
+            const dotGit = path.join(folder.uri.fsPath, '.git');
+            if (fs.existsSync(dotGit)) {
+                gitDirs.push(folder.uri.fsPath);
+            }
+        }
+        if (gitDirs.length === 0) { return; }
+
+        const outPath = path.join(context.globalStorageUri.fsPath, 'active-workspace.json');
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+
+        // Merge with existing workspaces (other VS Code windows may have written theirs)
+        let existing: string[] = [];
+        if (fs.existsSync(outPath)) {
+            try {
+                const data = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+                existing = Array.isArray(data.workspaces) ? data.workspaces : [];
+            } catch { /* corrupt file, overwrite */ }
+        }
+        const merged = [...new Set([...existing, ...gitDirs])];
+        fs.writeFileSync(outPath, JSON.stringify({ workspaces: merged }));
+    } catch (e) {
+        logger.appendLine(`[setupActiveWorkspaceFile] error: ${e}`);
     }
 }
 

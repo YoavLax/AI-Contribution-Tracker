@@ -44,6 +44,7 @@ function makeState(overrides: Partial<TrackerState>): TrackerState {
         models: [],
         subagentModels: [],
         sessionId: null,
+        sessionIds: [],
         stateCreatedAt: new Date().toISOString(),
         lastUpdated: '',
         tokensByModel: {},
