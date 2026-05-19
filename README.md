@@ -2,7 +2,7 @@
 
 # AI Contribution Tracker
 
-**Automatically tag every git commit with AI usage metadata — models, tokens, prompts, and cost signals. All local. Zero config.**
+**Automatically tag every git commit with AI usage metadata — models, tokens, prompts, and cost signals. Works with VS Code Copilot and [GitHub Copilot CLI](https://github.com/features/copilot/cli). All local. Zero config.**
 
 [![Version](https://img.shields.io/visual-studio-marketplace/v/YoavLax.ai-contribution-tracker?style=flat-square&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=YoavLax.ai-contribution-tracker)
 [![License](https://img.shields.io/github/license/YoavLax/AI-Contribution-Tracker?style=flat-square)](LICENSE)
@@ -51,6 +51,21 @@ docs: rewrite contributing guide
 Impacted by AI (Inline + Agent mode: new | Model: claude-sonnet-4.6 | Prompts: 3 | Sub-agents mode: Explore | sub-Agent prompts: 2 | Tokens: claude-sonnet-4-6: 180k in/4k out (155k cached))
 ```
 
+**GitHub Copilot CLI — committed after session closed (full token breakdown):**
+```
+feat: add rate limiting middleware
+
+Impacted by AI (Agent mode: copilot | Model: claude-sonnet-4.6 | Prompts: 2 | Tokens: claude-sonnet-4-6: 62k in/1k out (48k cached))
+```
+
+**GitHub Copilot CLI — committed while session still open (tokens not yet available):**
+```
+feat: add rate limiting middleware
+
+Impacted by AI (Agent mode: copilot | Model: claude-sonnet-4.6 | Prompts: 2)
+```
+> Token data is written to the CLI session transcript only when the session closes. Commit after ending the session to include the full per-model breakdown.
+
 ---
 
 ## How It Works
@@ -72,9 +87,9 @@ At the end of each session, the hook handler queries that database and records *
 
 Token data is **time-scoped** to the current session — spans from previous sessions in the same VS Code window are excluded, so each commit reflects only the tokens consumed for that specific piece of work.
 
-### 2. Copilot Hooks (Agent Sessions & Sub-agents)
+### 2. Copilot Hooks (VS Code & GitHub Copilot CLI)
 
-[VS Code Copilot Hooks](https://code.visualstudio.com/docs/copilot/customization/hooks) fire lifecycle events during every Copilot chat session. A lightweight Node.js handler listens to five events:
+[VS Code Copilot Hooks](https://code.visualstudio.com/docs/copilot/customization/hooks) fire lifecycle events during every Copilot chat session. The same hooks protocol is also used by [GitHub Copilot CLI](https://github.com/features/copilot/cli). A lightweight Node.js handler listens to five events:
 
 | Hook Event | What It Tracks |
 |---|---|
@@ -82,11 +97,22 @@ Token data is **time-scoped** to the current session — spans from previous ses
 | `UserPromptSubmit` | Counts user prompts; ignores sub-agent delegated prompts |
 | `SubagentStart` | Records sub-agent type (e.g., `Explore`) and increments count |
 | `SubagentStop` | Decrements the active sub-agent counter |
-| `Stop` | Queries token DB, parses log for model names, writes the flag file |
+| `Stop` | Queries token DB / CLI transcript, parses log for model names, writes the flag file |
 
 On `Stop`, the handler also parses the VS Code Copilot Chat log to extract model names — separated into **user-selected models** (`[panel/editAgent]` entries) and **sub-agent models** (`[tool/runSubagent*]` entries). Parsing is scoped by session ID and timestamp.
 
 State accumulates in `.git/ai-tracker-state.json` until consumed by the commit-msg hook.
+
+#### GitHub Copilot CLI behavior
+
+Copilot CLI fires the same hook events, but its working directory is typically the home folder or a system path rather than the repository. The handler detects this, buffers the session state in a temporary pending location, and merges it into the correct repo automatically at commit time — no extra configuration needed.
+
+Token data for CLI sessions is read from the session transcript at `~/.copilot/session-state/<session_id>/events.jsonl`. The full per-model breakdown is written as a `session.shutdown` entry **only when the CLI session ends**:
+
+| Commit timing | What appears in the marker |
+|---|---|
+| After the CLI session closes | Full token breakdown (input / output / cached / reasoning) |
+| While the session is still open | Model name and prompt/agent counts only — no token numbers |
 
 ### 3. Inline Suggestion Tracking (Deterministic)
 
@@ -124,7 +150,8 @@ A global `commit-msg` hook (auto-installed via `git config --global core.hooksPa
 ## Features
 
 - **Automatic** — Install once; every AI-assisted commit is tagged from that moment on. No per-repo setup.
-- **Token Tracking** — Real measured token counts from Copilot's OTEL pipeline, not estimates.
+- **GitHub Copilot CLI** — Works with [GitHub Copilot CLI](https://github.com/features/copilot/cli) in addition to VS Code. CLI sessions are detected and merged into the correct repo at commit time automatically.
+- **Token Tracking** — Real measured token counts from Copilot's OTEL pipeline (VS Code) or session transcripts (Copilot CLI), not estimates.
 - **Per-Model Breakdown** — Each model's input, output, cached, and reasoning tokens recorded separately — ready for cost calculation.
 - **Reasoning Tokens** — Thinking tokens from reasoning models (GPT-5.x, o1, o3) are tracked and labeled `+NNN reasoning`.
 - **Session-Scoped** — Token queries are time-bounded to the current session; previous commits in the same window don't bleed in.

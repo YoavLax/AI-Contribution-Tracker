@@ -12,12 +12,14 @@ import {
     saveState,
     formatMarker,
     extractTranscriptMetadata,
+    extractFromCliTranscript,
     extractModelFromCopilotLog,
     parseModelFromLogFile,
     dispatch,
     getStatePath,
     getFlagPath,
     handleCommitMsg,
+    getPendingStateDir,
 } from '../hook-handler';
 
 function runGit(args: string[], cwd: string): string {
@@ -599,10 +601,11 @@ suite('CommitMsg Tests', () => {
 
         handleCommitMsg({ timestamp: new Date().toISOString(), hookEventName: 'CommitMsg', cwd: tmpDir, gitDir }, gitDir);
 
-        // Flag should be unchanged — Stop already handled the token data
+        // Flag should be refreshed with full token data — CommitMsg takes the fast path
+        // (no OTEL re-query) but still writes the complete marker so the commit gets tokens
         const flagContent = fs.readFileSync(flagPath, 'utf8');
-        assert.strictEqual(flagContent, 'Impacted by AI (Agent mode: copilot | Prompts: 3)',
-            'Flag should not be modified when tokensByModel already populated');
+        assert.strictEqual(flagContent, 'Impacted by AI (Agent mode: copilot | Prompts: 3 | Tokens: claude-sonnet-4-6: 50k in/1k out (40k cached))',
+            'Flag should be refreshed with token data when tokensByModel is already populated');
     });
 
     test('CommitMsg returns early when no sessionId in state', () => {
@@ -654,6 +657,283 @@ suite('CommitMsg Tests', () => {
         assert.doesNotThrow(() => {
             dispatch({ timestamp: new Date().toISOString(), hookEventName: 'CommitMsg', cwd: tmpDir, gitDir });
         });
+    });
+});
+
+// ─── Copilot CLI Tests ────────────────────────────────────────────────────────
+
+suite('Copilot CLI Tests', function () {
+    this.timeout(10000);
+
+    let repoRoot: string;
+    let gitDir: string;
+    let cliSessionDir: string;
+
+    setup(() => {
+        repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-test-repo-'));
+        runGit(['init'], repoRoot);
+        runGit(['config', 'user.email', '"test@example.com"'], repoRoot);
+        runGit(['config', 'user.name', '"Test User"'], repoRoot);
+        gitDir = path.join(repoRoot, '.git');
+
+        // Create a fake ~/.copilot/session-state/<id>/events.jsonl directory
+        cliSessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-cli-session-'));
+    });
+
+    teardown(() => {
+        try { fs.rmSync(repoRoot, { recursive: true, force: true }); } catch { /* ok */ }
+        try { fs.rmSync(cliSessionDir, { recursive: true, force: true }); } catch { /* ok */ }
+    });
+
+    // ─── extractFromCliTranscript ─────────────────────────────────────
+
+    test('extractFromCliTranscript: model from session.model_change', () => {
+        const transcriptPath = path.join(cliSessionDir, 'events.jsonl');
+        const lines = [
+            JSON.stringify({ type: 'session.model_change', data: { newModel: 'claude-sonnet-4.6' } }),
+            JSON.stringify({ type: 'user.message', data: { content: 'Hello' } }),
+        ];
+        fs.writeFileSync(transcriptPath, lines.join('\n'));
+
+        const result = extractFromCliTranscript('sid-1', transcriptPath);
+        assert.deepStrictEqual(result.models, ['claude-sonnet-4.6']);
+        assert.deepStrictEqual(result.tokensByModel, {}, 'No tokens before session.shutdown');
+    });
+
+    test('extractFromCliTranscript: model from assistant.message', () => {
+        const transcriptPath = path.join(cliSessionDir, 'events.jsonl');
+        const lines = [
+            JSON.stringify({ type: 'assistant.message', data: { model: 'gpt-4.1', content: 'Hi there' } }),
+        ];
+        fs.writeFileSync(transcriptPath, lines.join('\n'));
+
+        const result = extractFromCliTranscript('sid-2', transcriptPath);
+        assert.deepStrictEqual(result.models, ['gpt-4.1']);
+    });
+
+    test('extractFromCliTranscript: full token breakdown from session.shutdown', () => {
+        const transcriptPath = path.join(cliSessionDir, 'events.jsonl');
+        const lines = [
+            JSON.stringify({ type: 'session.model_change', data: { newModel: 'claude-sonnet-4.6' } }),
+            JSON.stringify({ type: 'user.message', data: { content: 'Hello' } }),
+            JSON.stringify({
+                type: 'session.shutdown',
+                data: {
+                    modelMetrics: {
+                        'claude-sonnet-4-6': {
+                            usage: { inputTokens: 62000, outputTokens: 1200, cacheReadTokens: 48000, reasoningTokens: 0 }
+                        }
+                    }
+                }
+            }),
+        ];
+        fs.writeFileSync(transcriptPath, lines.join('\n'));
+
+        const result = extractFromCliTranscript('sid-3', transcriptPath);
+        assert.deepStrictEqual(result.models, ['claude-sonnet-4.6', 'claude-sonnet-4-6']);
+        assert.ok(result.tokensByModel['claude-sonnet-4-6'], 'Should have token data for the model');
+        assert.strictEqual(result.tokensByModel['claude-sonnet-4-6'].inputTokens, 62000);
+        assert.strictEqual(result.tokensByModel['claude-sonnet-4-6'].outputTokens, 1200);
+        assert.strictEqual(result.tokensByModel['claude-sonnet-4-6'].cachedTokens, 48000);
+        assert.strictEqual(result.tokensByModel['claude-sonnet-4-6'].reasoningTokens, 0);
+    });
+
+    test('extractFromCliTranscript: reasoning tokens', () => {
+        const transcriptPath = path.join(cliSessionDir, 'events.jsonl');
+        const lines = [
+            JSON.stringify({
+                type: 'session.shutdown',
+                data: {
+                    modelMetrics: {
+                        'gpt-5.4': {
+                            usage: { inputTokens: 10000, outputTokens: 500, cacheReadTokens: 0, reasoningTokens: 3000 }
+                        }
+                    }
+                }
+            }),
+        ];
+        fs.writeFileSync(transcriptPath, lines.join('\n'));
+
+        const result = extractFromCliTranscript('sid-4', transcriptPath);
+        assert.strictEqual(result.tokensByModel['gpt-5.4'].reasoningTokens, 3000);
+    });
+
+    test('extractFromCliTranscript: missing transcript returns empty', () => {
+        const result = extractFromCliTranscript('sid-missing', '/nonexistent/events.jsonl');
+        assert.deepStrictEqual(result.models, []);
+        assert.deepStrictEqual(result.tokensByModel, {});
+    });
+
+    test('extractFromCliTranscript: session still active (no shutdown) → models only, no tokens', () => {
+        const transcriptPath = path.join(cliSessionDir, 'events.jsonl');
+        const lines = [
+            JSON.stringify({ type: 'session.model_change', data: { newModel: 'claude-sonnet-4.6' } }),
+            JSON.stringify({ type: 'assistant.message', data: { model: 'claude-sonnet-4.6', content: 'Sure!' } }),
+            // No session.shutdown — session still running
+        ];
+        fs.writeFileSync(transcriptPath, lines.join('\n'));
+
+        const result = extractFromCliTranscript('sid-active', transcriptPath);
+        assert.ok(result.models.length > 0, 'Should still capture model names');
+        assert.deepStrictEqual(result.tokensByModel, {}, 'No token data while session is active');
+    });
+
+    test('extractFromCliTranscript: multiple models in one session', () => {
+        const transcriptPath = path.join(cliSessionDir, 'events.jsonl');
+        const lines = [
+            JSON.stringify({ type: 'session.model_change', data: { newModel: 'claude-sonnet-4.6' } }),
+            JSON.stringify({ type: 'session.model_change', data: { newModel: 'gpt-4.1' } }),
+            JSON.stringify({ type: 'assistant.message', data: { model: 'claude-sonnet-4.6' } }),
+        ];
+        fs.writeFileSync(transcriptPath, lines.join('\n'));
+
+        const result = extractFromCliTranscript('sid-multi', transcriptPath);
+        assert.ok(result.models.includes('claude-sonnet-4.6'), 'Should include claude');
+        assert.ok(result.models.includes('gpt-4.1'), 'Should include gpt-4.1');
+    });
+
+    // ─── CLI Pending State (cwd outside git repo) ─────────────────────
+
+    test('CLI events with non-git cwd are stored in pending state', () => {
+        const homedir = os.homedir();
+        // homedir is not a git repo (or at minimum not *this* repo)
+        const result = dispatch(makeInput({
+            cwd: homedir,
+            hookEventName: 'SessionStart',
+            sessionId: 'cli-session-pending-1',
+        }));
+        assert.deepStrictEqual(result, { continue: true });
+
+        // State should land in pending dir, not in any .git dir
+        const pendingDir = getPendingStateDir();
+        const pendingState = loadState(pendingDir);
+        // sessionId should be recorded in pending state
+        assert.ok(
+            pendingState.sessionId === 'cli-session-pending-1' ||
+            pendingState.sessionIds.includes('cli-session-pending-1'),
+            'Session ID should be stored in pending state'
+        );
+    });
+
+    test('CommitMsg merges CLI pending state into repo at commit time', () => {
+        // 1. Simulate CLI events arriving with no git repo context
+        const homedir = os.homedir();
+        const sessionId = 'cli-merge-session-1';
+
+        dispatch(makeInput({ cwd: homedir, hookEventName: 'SessionStart', sessionId, source: 'new' }));
+        dispatch(makeInput({ cwd: homedir, hookEventName: 'UserPromptSubmit', sessionId, prompt: 'Build the feature' }));
+        dispatch(makeInput({ cwd: homedir, hookEventName: 'UserPromptSubmit', sessionId, prompt: 'Add tests too' }));
+
+        // 2. Write a CLI transcript with model and tokens (simulating session closed)
+        const transcriptPath = path.join(cliSessionDir, 'events.jsonl');
+        const lines = [
+            JSON.stringify({ type: 'session.model_change', data: { newModel: 'claude-sonnet-4.6' } }),
+            JSON.stringify({
+                type: 'session.shutdown',
+                data: {
+                    modelMetrics: {
+                        'claude-sonnet-4-6': {
+                            usage: { inputTokens: 50000, outputTokens: 2000, cacheReadTokens: 40000, reasoningTokens: 0 }
+                        }
+                    }
+                }
+            }),
+        ];
+        fs.writeFileSync(transcriptPath, lines.join('\n'));
+
+        // Patch pending state to reference our transcript
+        const pendingDir = getPendingStateDir();
+        const pendingState = loadState(pendingDir);
+        pendingState.sessionIds = [sessionId];
+        pendingState.sessionId = sessionId;
+        saveState(pendingDir, pendingState);
+
+        // Monkeypatch: write the CLI transcript where extractFromCliTranscript can find it
+        // by pointing sessionIds at a path we control via the overriding transcriptPath arg.
+        // Since handleCommitMsg calls extractFromCliTranscript(sid) without a path (uses default
+        // ~/.copilot path), we instead pre-populate tokensByModel in pending state to simulate
+        // what Stop would have done had it fired.
+        pendingState.tokensByModel = {
+            'claude-sonnet-4-6': { inputTokens: 50000, outputTokens: 2000, cachedTokens: 40000, reasoningTokens: 0 }
+        };
+        pendingState.models = ['claude-sonnet-4.6'];
+        saveState(pendingDir, pendingState);
+
+        // 3. CommitMsg fires with the real repo's gitDir
+        handleCommitMsg(
+            { timestamp: new Date().toISOString(), hookEventName: 'CommitMsg', cwd: repoRoot, gitDir },
+            gitDir
+        );
+
+        // 4. Flag should be written to the repo with CLI data
+        const flagPath = getFlagPath(gitDir);
+        assert.ok(fs.existsSync(flagPath), 'Flag should be written after CLI pending merge');
+        const flagContent = fs.readFileSync(flagPath, 'utf8');
+        assert.ok(flagContent.includes('Impacted by AI'), 'Flag should have AI marker');
+        assert.ok(flagContent.includes('Prompts: 2'), 'Should include CLI prompt count');
+        assert.ok(flagContent.includes('Tokens:'), 'Should include token data from CLI transcript');
+    });
+
+    test('CommitMsg during active CLI session: prompts/model shown, no tokens', () => {
+        const sessionId = 'cli-active-session';
+
+        // Simulate events arriving at the homedir (CLI cwd), then pre-populate pending state
+        const pendingDir = getPendingStateDir();
+        const activeState = loadState(pendingDir);
+        activeState.sessionId = sessionId;
+        activeState.sessionIds = [sessionId];
+        activeState.promptCount = 3;
+        activeState.mainAgentTypes = ['copilot'];
+        activeState.models = ['claude-sonnet-4.6'];
+        // No tokensByModel — session still open, shutdown not written yet
+        activeState.tokensByModel = {};
+        saveState(pendingDir, activeState);
+
+        handleCommitMsg(
+            { timestamp: new Date().toISOString(), hookEventName: 'CommitMsg', cwd: repoRoot, gitDir },
+            gitDir
+        );
+
+        const flagPath = getFlagPath(gitDir);
+        assert.ok(fs.existsSync(flagPath), 'Flag should still be written');
+        const flagContent = fs.readFileSync(flagPath, 'utf8');
+        assert.ok(flagContent.includes('Prompts: 3'), 'Should include prompt count');
+        assert.ok(flagContent.includes('Agent mode: copilot'), 'Should include agent mode');
+        assert.ok(!flagContent.includes('Tokens:'), 'No token data while session is active');
+    });
+
+    // ─── VS Code + CLI marker formatting ─────────────────────────────
+
+    test('formatMarker for CLI session with full token data', () => {
+        const state = makeState({
+            promptCount: 2,
+            mainAgentTypes: ['copilot'],
+            models: ['claude-sonnet-4.6'],
+            tokensByModel: {
+                'claude-sonnet-4-6': { inputTokens: 62000, outputTokens: 1200, cachedTokens: 48000, reasoningTokens: 0 }
+            },
+        });
+        const marker = formatMarker(state);
+        assert.ok(marker.includes('Agent mode: copilot'), 'Should show copilot as agent mode');
+        assert.ok(marker.includes('Model: claude-sonnet-4.6'), 'Should show model');
+        assert.ok(marker.includes('Prompts: 2'), 'Should show prompt count');
+        assert.ok(marker.includes('Tokens:'), 'Should include token section');
+        assert.ok(marker.includes('62k in/1k out'), 'Should format CLI token counts');
+        assert.ok(marker.includes('48k cached'), 'Should include cache hits');
+    });
+
+    test('formatMarker for CLI active session (no tokens)', () => {
+        const state = makeState({
+            promptCount: 4,
+            mainAgentTypes: ['copilot'],
+            models: ['gpt-4.1'],
+            tokensByModel: {},
+        });
+        const marker = formatMarker(state);
+        assert.ok(marker.includes('Agent mode: copilot'));
+        assert.ok(marker.includes('Model: gpt-4.1'));
+        assert.ok(marker.includes('Prompts: 4'));
+        assert.ok(!marker.includes('Tokens:'), 'No tokens section when session still active');
     });
 });
 

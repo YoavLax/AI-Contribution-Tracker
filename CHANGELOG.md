@@ -1,6 +1,20 @@
 # Change Log
 
 All notable changes to the "AI Contribution Tracker" extension will be documented in this file.
+## [2.2.0] - 2026-05-19
+
+### Added
+- **GitHub Copilot CLI support**: sessions from [GitHub Copilot CLI](https://github.com/features/copilot/cli) are now tracked automatically — no extra configuration needed. The hook handler detects CLI events (which arrive without a git repo context), buffers them in a pending state, and merges them into the correct repository at commit time.
+- **CLI session transcript parsing**: model names and full per-model token breakdowns are read from `~/.copilot/session-state/<session_id>/events.jsonl`. Token data is sourced from the `session.shutdown` entry written when the CLI session ends.
+- **Multi-session accumulation**: multiple Copilot agent sessions (VS Code or CLI) before a single commit are merged, with prompt counts and token totals summed across all sessions.
+- **State reset lifecycle**: session state is cleanly reset after each commit, preventing data from bleeding into subsequent commits.
+
+### Changed
+- `CommitMsg` handler now refreshes the flag with full token data (including tokens already computed at `Stop` time) before the commit is finalized.
+
+### Notes
+- When committing during an active Copilot CLI session (before the session closes), the marker will include the model and prompt count but **not** token counts — those are only available after the session ends and `session.shutdown` is written to the transcript.
+
 ## [2.1.3] - 2026-05-11
 
 ### Fixed

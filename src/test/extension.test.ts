@@ -1,47 +1,45 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 
+const EXTENSION_ID = 'YoavLax.ai-contribution-tracker';
+
 suite('Extension Test Suite', () => {
-vscode.window.showInformationMessage('Start all tests.');
+    vscode.window.showInformationMessage('Start all tests.');
 
-test('Extension should start and activate', async () => {
-        const ext = vscode.extensions.getExtension('demo.copilot-insight-tracker');
-        assert.ok(ext, 'Extension should be present');
-        
+    test('Extension should start and activate', async () => {
+        const ext = vscode.extensions.getExtension(EXTENSION_ID);
+        assert.ok(ext, `Extension '${EXTENSION_ID}' should be present`);
+
         const api = await ext.activate();
-        assert.ok(ext.isActive, 'Extension should be active');
-
-        assert.ok(api && api.tracker, 'Extension should export tracker');
+        assert.ok(ext.isActive, 'Extension should be active after activation');
+        assert.ok(api && api.tracker, 'Extension should export a tracker object');
     }).timeout(10000);
 
     test('Extension should set context key on activation', async () => {
-        const ext = vscode.extensions.getExtension('demo.copilot-insight-tracker');
+        const ext = vscode.extensions.getExtension(EXTENSION_ID);
+        assert.ok(ext, `Extension '${EXTENSION_ID}' should be present`);
         await ext!.activate();
-        
-        // The context key copilotInsightTracker.active should be set
-        // This enables our keybindings to have higher priority
-        assert.ok(ext!.isActive, 'Extension should be active with context key set');
+        assert.ok(ext!.isActive, 'Extension should be active (context key is set via setContext inside tracker)');
     }).timeout(10000);
 
     test('Extension should NOT track direct text edits (only AI accepts)', async () => {
-        const ext = vscode.extensions.getExtension('demo.copilot-insight-tracker');
+        const ext = vscode.extensions.getExtension(EXTENSION_ID);
+        assert.ok(ext, `Extension '${EXTENSION_ID}' should be present`);
         await ext!.activate();
 
         const doc = await vscode.workspace.openTextDocument({ content: '', language: 'typescript' });
         await vscode.window.showTextDocument(doc);
 
-        // Small direct edit - should NOT be tracked
         const edit = new vscode.WorkspaceEdit();
         edit.insert(doc.uri, new vscode.Position(0, 0), 'const x = 1;');
-        
         await vscode.workspace.applyEdit(edit);
         await new Promise(r => setTimeout(r, 500));
-        
-        // Small edits are ignored as they look like manual typing
+        // No assertion needed — test verifies no crash occurs on manual edits
     }).timeout(10000);
 
     test('Extension should NOT track small typing', async () => {
-        const ext = vscode.extensions.getExtension('demo.copilot-insight-tracker');
+        const ext = vscode.extensions.getExtension(EXTENSION_ID);
+        assert.ok(ext, `Extension '${EXTENSION_ID}' should be present`);
         await ext!.activate();
 
         const doc = await vscode.workspace.openTextDocument({ content: '', language: 'typescript' });
@@ -50,68 +48,67 @@ test('Extension should start and activate', async () => {
         const edit = new vscode.WorkspaceEdit();
         edit.insert(doc.uri, new vscode.Position(0, 0), 'a');
         await vscode.workspace.applyEdit(edit);
-        
         await new Promise(r => setTimeout(r, 200));
-        // Small typing is ignored
+        // No assertion needed — single-character edits should never trigger tracking
     });
-    
+
     test('Inline suggestion commands should be registered', async () => {
-        const ext = vscode.extensions.getExtension('demo.copilot-insight-tracker');
+        const ext = vscode.extensions.getExtension(EXTENSION_ID);
+        assert.ok(ext, `Extension '${EXTENSION_ID}' should be present`);
         await ext!.activate();
-        
+
         const commands = await vscode.commands.getCommands(true);
-        
-        // Inline suggestion commands
+
         assert.ok(
             commands.includes('copilotInsightTracker.acceptInlineSuggestion'),
-            'Accept inline suggestion command should be registered'
+            'Tab accept command should be registered'
         );
         assert.ok(
             commands.includes('copilotInsightTracker.acceptNextWord'),
-            'Accept next word command should be registered'
+            'Ctrl+Right accept-word command should be registered'
         );
         assert.ok(
             commands.includes('copilotInsightTracker.acceptNextLine'),
-            'Accept next line command should be registered'
+            'Ctrl+Shift+Right accept-line command should be registered'
         );
-        
-        // Agentic commands should NOT be registered (handled by hooks now)
+
+        // Agentic interception commands must NOT be registered — handled by hooks
         assert.ok(
             !commands.includes('copilotInsightTracker.applyChatCode'),
-            'Agentic command should not be registered'
+            'Legacy agentic applyChatCode command should not be registered'
         );
         assert.ok(
             !commands.includes('copilotInsightTracker.paste'),
             'Paste tracking command should not be registered'
         );
     });
-    
-    test('Wrapper command should execute original command', async () => {
-        const ext = vscode.extensions.getExtension('demo.copilot-insight-tracker');
+
+    test('Wrapper command should execute original command without throwing', async () => {
+        const ext = vscode.extensions.getExtension(EXTENSION_ID);
+        assert.ok(ext, `Extension '${EXTENSION_ID}' should be present`);
         await ext!.activate();
-        
-        // Create a document
+
         const doc = await vscode.workspace.openTextDocument({ content: '', language: 'typescript' });
         await vscode.window.showTextDocument(doc);
-        
-        // Execute our wrapper command - it should not throw
-        // (The original command won't do anything without an inline suggestion visible)
+
+        // The wrapper fires VS Code's built-in inline-suggest commit; with no suggestion
+        // visible it is a no-op. It must not throw from our side.
         try {
             await vscode.commands.executeCommand('copilotInsightTracker.acceptInlineSuggestion');
-            // Command executed successfully
         } catch {
-            // Expected - no inline suggestion was visible
+            // Acceptable — VS Code may reject when no suggestion is active
         }
     }).timeout(10000);
 
     test('Extension should NOT track copy-paste operations', async () => {
-        const ext = vscode.extensions.getExtension('demo.copilot-insight-tracker');
+        const ext = vscode.extensions.getExtension(EXTENSION_ID);
+        assert.ok(ext, `Extension '${EXTENSION_ID}' should be present`);
         await ext!.activate();
 
         const doc = await vscode.workspace.openTextDocument({ content: '', language: 'typescript' });
         await vscode.window.showTextDocument(doc);
 
-        // Simulate a large paste - should NOT be tracked
+        // Large paste without going through our command — must never set the flag
         const edit = new vscode.WorkspaceEdit();
         const largeCode = `
 function complexFunction() {
@@ -124,7 +121,7 @@ function complexFunction() {
 
 class MyClass {
     private data: string[];
-    
+
     constructor() {
         this.data = [];
     }

@@ -6,6 +6,8 @@ import * as os from 'os';
 import * as cp from 'child_process';
 import { CopilotTracker } from '../tracker';
 
+const EXTENSION_ID = 'YoavLax.ai-contribution-tracker';
+
 function runGit(args: string[], cwd: string): string {
     return cp.execSync(`git ${args.join(' ')}`, { cwd, encoding: 'utf-8' });
 }
@@ -51,7 +53,8 @@ suite('Git Integration Tests (Deterministic Only)', function () {
         }
 
         // 4. Activate Extension & Setup Tracker Once
-        const ext = vscode.extensions.getExtension('demo.copilot-insight-tracker');
+        const ext = vscode.extensions.getExtension(EXTENSION_ID);
+        assert.ok(ext, `Extension '${EXTENSION_ID}' must be present for integration tests`);
         const api = await ext!.activate();
         tracker = api.tracker;
         

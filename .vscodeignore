@@ -16,3 +16,4 @@ node_modules/**
 .github/**
 esbuild.js
 AGENTIC_DETECTION_PLAN.md
+session-repo-map.json
