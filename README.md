@@ -130,13 +130,62 @@ When an inline suggestion is accepted, the flag is written to `.git/AI_IMPACT_PE
 
 A global `commit-msg` hook (auto-installed via `git config --global core.hooksPath`) fires at every commit across all your repositories. It reads `AI_IMPACT_PENDING`, appends the marker to the commit message, then removes both the flag and the state file.
 
+### 5. OpenCode Integration
+
+The extension ships with a standalone OpenCode plugin that hooks into OpenCode's session lifecycle events using the same flag-file mechanism as the Copilot hooks. Install it once and every git commit made from an OpenCode session is automatically tagged.
+
+| Hook / Event | What It Tracks |
+|---|---|
+| `session.created` | Records session ID and agent mode (e.g., `opencode/build`, `opencode/senna`) |
+| `chat.message` | Counts user prompts; ignores sub-agent delegated prompts |
+| `message.updated` | Per-model token breakdown (input / output / cached / reasoning) — accumulated with delta tracking to prevent double-counting |
+| `tool.execute.after` (task) | Sub-agent invocations (type extracted from args) |
+| `session.idle` / `session.status` | Triggers final state write and flag creation |
+
+**Installation:**
+
+**Recommended — npm package** (zero config, auto git-hook install):
+
+Add to your `~/.config/opencode/opencode.json`:
+```json
+{
+  "plugin": [
+    "@varonis/ai-contribution-tracker"
+  ]
+}
+```
+
+That's it. The plugin auto-installs the global git `commit-msg` hook on first run.
+
+**Manual** (copy file directly):
+```bash
+# Global
+cp packages/opencode-plugin/index.ts ~/.config/opencode/plugin/ai-contribution-tracker.ts
+```
+
+> **Note:** The npm package auto-installs the git hook. For manual installation, you also need the global `commit-msg` hook — see the VS Code extension or run the plugin once via npm to set it up.
+
+**Example output with OpenCode session:**
+```
+feat: add rate limiter middleware
+
+Impacted by AI (Agent mode: opencode/build | Model: claude-sonnet-4-6 | Prompts: 4 | Tokens: claude-sonnet-4-6: 120k in/3k out (98k cached))
+```
+
+**With custom agents (e.g., your team's domain agents):**
+```
+refactor: split auth service
+
+Impacted by AI (Agent mode: opencode/senna | Model: claude-opus-4-6 | Prompts: 2 | Sub-agents mode: unspecified-high | sub-Agent prompts: 3 | Tokens: claude-opus-4-6: 296k in/5k out (243k cached))
+```
+
 ---
 
 ## Marker Field Reference
 
 | Field | Description | Example |
 |---|---|---|
-| `Agent mode` | Top-level agent type | `new`, `copilot`, `edit` |
+| `Agent mode` | Top-level agent type (Copilot: `new`, `copilot`, `edit`; OpenCode: `opencode/build`, `opencode/senna`, etc.) | `new`, `copilot`, `edit`, `opencode/build` |
 | `Model` | User-selected model(s) for the main agent | `claude-sonnet-4.6`, `gpt-5.4` |
 | `Prompts` | Number of user prompts (excludes sub-agent internal prompts) | `3` |
 | `Sub-agents mode` | Types of sub-agents invoked | `Explore`, `Plan` |
@@ -158,6 +207,7 @@ A global `commit-msg` hook (auto-installed via `git config --global core.hooksPa
 - **Multi-Session Accumulation** — Multiple agent sessions before a single commit are merged and their token counts summed.
 - **Inline + Agent** — Tracks both ghost-text acceptances and full chat sessions; merges them when both occur before a commit.
 - **Global Git Hooks** — One hook covers all repositories. No per-repo initialization.
+- **OpenCode Support** — Standalone plugin tracks OpenCode sessions with per-model token breakdown and custom agent labels.
 - **Privacy First** — Everything runs locally. No code, prompts, or token data leaves your machine.
 
 ---
@@ -200,6 +250,7 @@ Press **F5** to launch the Extension Development Host for debugging.
 | `src/extension.ts` | Extension activation, global git hooks setup, Copilot hooks config, OTEL enablement |
 | `src/hook-handler.ts` | Standalone Node.js hook handler — session tracking, token DB query, marker formatting |
 | `src/tracker.ts` | Inline suggestion detection via deterministic command interception |
+| `src/opencode-plugin.ts` | OpenCode plugin — session tracking, token accumulation via `message.updated`, writes to the same flag files as Copilot hooks |
 
 ---
 

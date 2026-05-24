@@ -16,7 +16,9 @@ const esbuildProblemMatcherPlugin = {
 		build.onEnd((result) => {
 			result.errors.forEach(({ text, location }) => {
 				console.error(`✘ [ERROR] ${text}`);
-				console.error(`    ${location.file}:${location.line}:${location.column}:`);
+				if (location) {
+					console.error(`    ${location.file}:${location.line}:${location.column}:`);
+				}
 			});
 			console.log('[watch] build finished');
 		});
@@ -51,11 +53,23 @@ async function main() {
 		external: [],
 	});
 
+	// OpenCode plugin - ESM format (matches OpenCode plugin loader)
+	const openCodeCtx = await esbuild.context({
+		...sharedOptions,
+		entryPoints: ['src/opencode-plugin.ts'],
+		outfile: 'dist/opencode-plugin.js',
+		external: [], format: 'esm',
+	});
+
 	if (watch) {
-		await Promise.all([extCtx.watch(), hookCtx.watch()]);
+		await Promise.all([extCtx.watch(), hookCtx.watch(), openCodeCtx.watch()]);
 	} else {
-		await Promise.all([extCtx.rebuild(), hookCtx.rebuild()]);
-		await Promise.all([extCtx.dispose(), hookCtx.dispose()]);
+		const results = await Promise.allSettled([extCtx.rebuild(), hookCtx.rebuild(), openCodeCtx.rebuild()]);
+		await Promise.all([extCtx.dispose(), hookCtx.dispose(), openCodeCtx.dispose()]);
+		const failed = results.find((result) => result.status === 'rejected');
+		if (failed) {
+			throw failed.reason;
+		}
 	}
 }
 

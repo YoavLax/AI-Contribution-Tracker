@@ -1296,6 +1296,6 @@ function main(): void {
 }
 
 // Only run main when executed directly (not imported for testing)
-if (require.main === module) {
+if (typeof require !== "undefined" && typeof module !== "undefined" && require.main === module) {
     main();
 }
