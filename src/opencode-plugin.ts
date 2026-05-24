@@ -78,10 +78,15 @@ function formatMarker(s: TrackerState): string {
 function writeFlag(g: string, s: TrackerState) {
     if (s.promptCount === 0 && s.mainAgentTypes.length === 0 && s.subagentTypes.length === 0 && s.subagentCount === 0) return;
     const fp = getFlagPath(g), marker = formatMarker(s);
-    if (fs.existsSync(fp)) { const ex = fs.readFileSync(fp, "utf8").trim();
-        if (ex.includes("Model:")) return;
-        if (ex.includes("Inline")) { const inner = marker.match(/\((.+)\)$/)?.[1];
-            fs.writeFileSync(fp, inner ? `Impacted by AI (Inline + ${inner})` : "Impacted by AI (Inline)"); return; }
+    if (fs.existsSync(fp)) {
+        const ex = fs.readFileSync(fp, "utf8").trim();
+        if (ex.includes("Inline")) {
+            // Merge: preserve Inline marker, add agent data
+            const inner = marker.match(/\((.+)\)$/)?.[1];
+            fs.writeFileSync(fp, inner ? `Impacted by AI (Inline + ${inner})` : "Impacted by AI (Inline)");
+            return;
+        }
+        // Always overwrite with latest state — state only grows, never shrinks
     }
     fs.writeFileSync(fp, marker);
 }
@@ -117,7 +122,10 @@ function flushPending(sess: SessionState, sid: string) {
     sess.pendingPrompts = 0;
     sess.pendingModels = [];
     saveState(sess.gitDir, state);
-    writeFlag(sess.gitDir, state);
+    // Only write flag if there is meaningful activity to report
+    if (state.promptCount > 0 || state.subagentCount > 0 || Object.keys(state.tokensByModel).length > 0) {
+        writeFlag(sess.gitDir, state);
+    }
 }
 
 const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
@@ -160,10 +168,16 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                     const cur: TokenTotals = { inputTokens: Number(info.tokens.input ?? 0), outputTokens: Number(info.tokens.output ?? 0),
                         cachedTokens: Number(info.tokens.cache?.read ?? 0), reasoningTokens: Number(info.tokens.reasoning ?? 0) };
                     const prev = msgId ? sess.lastTokens.get(msgId) : undefined;
-                    const delta: TokenTotals = { inputTokens: cur.inputTokens - (prev?.inputTokens ?? 0), outputTokens: cur.outputTokens - (prev?.outputTokens ?? 0),
-                        cachedTokens: cur.cachedTokens - (prev?.cachedTokens ?? 0), reasoningTokens: cur.reasoningTokens - (prev?.reasoningTokens ?? 0) };
+                    // Clamp deltas to >= 0 (snapshots can decrease; we never subtract)
+                    const delta: TokenTotals = {
+                        inputTokens:     Math.max(0, cur.inputTokens     - (prev?.inputTokens     ?? 0)),
+                        outputTokens:    Math.max(0, cur.outputTokens    - (prev?.outputTokens    ?? 0)),
+                        cachedTokens:    Math.max(0, cur.cachedTokens    - (prev?.cachedTokens    ?? 0)),
+                        reasoningTokens: Math.max(0, cur.reasoningTokens - (prev?.reasoningTokens ?? 0)),
+                    };
                     if (msgId) sess.lastTokens.set(msgId, cur);
-                    if (delta.inputTokens <= 0 && delta.outputTokens <= 0) return;
+                    // Skip if no meaningful delta across any token type
+                    if (delta.inputTokens <= 0 && delta.outputTokens <= 0 && delta.cachedTokens <= 0 && delta.reasoningTokens <= 0) return;
                     const state = loadState(sess.gitDir);
                     const ex = state.tokensByModel[modelId];
                     if (ex) { ex.inputTokens += delta.inputTokens; ex.outputTokens += delta.outputTokens; ex.cachedTokens += delta.cachedTokens; ex.reasoningTokens += delta.reasoningTokens; }
@@ -213,11 +227,14 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
 
                 if (input.tool === "task") {
                     const args = input.args as Record<string, unknown> ?? {};
-                    const agentType = (args.subagent_type || args.category || "task") as string;
+                    // Validate agentType is a string to avoid [object Object] in markers
+                    const rawType = args.subagent_type || args.category;
+                    const agentType = typeof rawType === "string" ? rawType : "task";
                     const state = loadState(sess.gitDir);
                     state.subagentCount += 1;
                     if (!state.subagentTypes.includes(agentType)) state.subagentTypes.push(agentType);
                     saveState(sess.gitDir, state);
+                    writeFlag(sess.gitDir, state); // keep flag current for commit-before-idle
                 }
             } catch { /* never crash OpenCode */ }
         },
