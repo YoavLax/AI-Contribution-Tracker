@@ -76,7 +76,7 @@ function formatMarker(s: TrackerState): string {
     return p.length ? `Impacted by AI (${p.join(" | ")})` : "Impacted by AI";
 }
 function writeFlag(g: string, s: TrackerState) {
-    if (s.promptCount === 0 && s.mainAgentTypes.length === 0 && s.subagentTypes.length === 0 && s.subagentCount === 0) return;
+    if (s.promptCount === 0 && s.mainAgentTypes.length === 0 && s.subagentTypes.length === 0 && s.subagentCount === 0 && Object.keys(s.tokensByModel).length === 0) return;
     const fp = getFlagPath(g), marker = formatMarker(s);
     if (fs.existsSync(fp)) {
         const ex = fs.readFileSync(fp, "utf8").trim();

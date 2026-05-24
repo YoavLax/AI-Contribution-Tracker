@@ -77,7 +77,7 @@ function formatMarker(s: TrackerState): string {
     return p.length ? `Impacted by AI (${p.join(" | ")})` : "Impacted by AI";
 }
 function writeFlag(g: string, s: TrackerState) {
-    if (s.promptCount === 0 && s.mainAgentTypes.length === 0 && s.subagentTypes.length === 0 && s.subagentCount === 0) return;
+    if (s.promptCount === 0 && s.mainAgentTypes.length === 0 && s.subagentTypes.length === 0 && s.subagentCount === 0 && Object.keys(s.tokensByModel).length === 0) return;
     const fp = getFlagPath(g), marker = formatMarker(s);
     if (fs.existsSync(fp)) {
         const ex = fs.readFileSync(fp, "utf8").trim();
@@ -128,6 +128,8 @@ function ensureGitHook() {
         const existingPath = execSync("git config --global core.hooksPath", {
             encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],
         }).trim();
+        // Ensure the configured hooks dir exists (it may have been deleted)
+        fs.mkdirSync(existingPath, { recursive: true });
         appendOrCreateHook(existingPath);
     } catch {
         const hooksDir = path.join(os.homedir(), ".config", "ai-contribution-tracker", "git-hooks");

@@ -134,7 +134,7 @@ That's it. The plugin auto-installs the global git `commit-msg` hook on first ru
 **Manual** (copy file directly):
 ```bash
 # Global
-cp packages/opencode-plugin/index.ts ~/.config/opencode/plugin/ai-contribution-tracker.ts
+cp src/opencode-plugin.ts ~/.config/opencode/plugin/ai-contribution-tracker.ts
 ```
 
 > **Note:** The npm package auto-installs the git hook. For manual installation, you also need the global `commit-msg` hook — see the VS Code extension or run the plugin once via npm to set it up.

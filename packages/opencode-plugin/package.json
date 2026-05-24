@@ -1,17 +1,26 @@
 {
   "name": "@varonis/ai-contribution-tracker",
   "version": "1.0.0",
-  "description": "OpenCode plugin — tracks AI coding sessions and tags git commits with Impacted by AI markers",
+  "description": "OpenCode plugin \u2014 tracks AI coding sessions and tags git commits with Impacted by AI markers",
   "main": "index.ts",
   "types": "index.ts",
-  "files": ["index.ts"],
+  "files": [
+    "index.ts"
+  ],
   "exports": {
     ".": {
       "import": "./index.ts",
       "default": "./index.ts"
     }
   },
-  "keywords": ["opencode", "opencode-plugin", "ai", "tracking", "git", "commits"],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "ai",
+    "tracking",
+    "git",
+    "commits"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
