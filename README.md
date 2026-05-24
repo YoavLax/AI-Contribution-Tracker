@@ -116,19 +116,28 @@ The extension ships with a standalone OpenCode plugin that hooks into OpenCode's
 | `tool.execute.after` (task) | Sub-agent invocations (type extracted from args) |
 | `session.idle` / `session.status` | Triggers final state write and flag creation |
 
-**Installation (pick one):**
+**Installation:**
 
-**Project-level** (works for one repo/project):
-```bash
-cp dist/opencode-plugin.js .opencode/plugin/ai-contribution-tracker.js
+**Recommended — npm package** (zero config, auto git-hook install):
+
+Add to your `~/.config/opencode/opencode.json`:
+```json
+{
+  "plugin": [
+    "@varonis/ai-contribution-tracker"
+  ]
+}
 ```
 
-**Global** (works everywhere):
+That's it. The plugin auto-installs the global git `commit-msg` hook on first run.
+
+**Manual** (copy file directly):
 ```bash
-cp dist/opencode-plugin.js ~/.config/opencode/plugins/ai-contribution-tracker.js
+# Global
+cp packages/opencode-plugin/index.ts ~/.config/opencode/plugin/ai-contribution-tracker.ts
 ```
 
-> **Note:** The global git `commit-msg` hook (installed by the VS Code extension) must still be configured for commit message tagging to work. The OpenCode plugin writes the flag; the git hook reads it.
+> **Note:** The npm package auto-installs the git hook. For manual installation, you also need the global `commit-msg` hook — see the VS Code extension or run the plugin once via npm to set it up.
 
 **Example output with OpenCode session:**
 ```
