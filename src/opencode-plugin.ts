@@ -6,6 +6,7 @@
  * working in, even when OpenCode opens a parent directory with multiple repos.
  */
 import type { Plugin } from "@opencode-ai/plugin" with { "resolution-mode": "import" };
+// Workaround: @opencode-ai/plugin references HeadersInit which is missing in Node types
 declare global { type HeadersInit = unknown; }
 import * as fs from "fs";
 import * as path from "path";
@@ -37,7 +38,7 @@ function findGitDir(cwd: string): string | null {
     try {
         const r = path.resolve(cwd, execSync("git rev-parse --git-dir", { cwd, encoding: "utf8", stdio: ["pipe","pipe","pipe"] }).trim());
         if (fs.existsSync(r)) return r;
-    } catch {}
+    } catch { /* never crash OpenCode */ }
     return null;
 }
 function getStatePath(g: string) { return path.join(g, "ai-tracker-state.json"); }
@@ -51,7 +52,7 @@ function loadState(g: string): TrackerState {
         if (typeof s.activeSubagents !== "number") s.activeSubagents = 0;
         if (typeof s.stateCreatedAt !== "string") s.stateCreatedAt = s.lastUpdated || new Date().toISOString();
         return s;
-    } catch {} }
+    } catch { /* never crash OpenCode */ } }
     return { promptCount: 0, subagentCount: 0, mainAgentTypes: [], subagentTypes: [], activeSubagents: 0,
         models: [], subagentModels: [], sessionId: null, stateCreatedAt: new Date().toISOString(),
         lastUpdated: new Date().toISOString(), tokensByModel: {} };
@@ -170,7 +171,7 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                     saveState(sess.gitDir, state);
                     writeFlag(sess.gitDir, state);
                 }
-            } catch {}
+            } catch { /* never crash OpenCode */ }
         },
         "chat.message": async (input, _output) => {
             try {
@@ -191,7 +192,7 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                     if (input.agent) sess.agentName = input.agent;
                     if (input.model?.modelID && !sess.pendingModels.includes(input.model.modelID)) sess.pendingModels.push(input.model.modelID);
                 }
-            } catch {}
+            } catch { /* never crash OpenCode */ }
         },
         "tool.execute.after": async (input, _output) => {
             try {
@@ -218,7 +219,7 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                     if (!state.subagentTypes.includes(agentType)) state.subagentTypes.push(agentType);
                     saveState(sess.gitDir, state);
                 }
-            } catch {}
+            } catch { /* never crash OpenCode */ }
         },
     };
 };
