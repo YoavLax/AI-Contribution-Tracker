@@ -2,7 +2,7 @@
 
 # AI Contribution Tracker
 
-**Automatically tag every git commit with AI usage metadata — models, tokens, prompts, and cost signals. Works with VS Code Copilot and [GitHub Copilot CLI](https://github.com/features/copilot/cli). All local. Zero config.**
+**Automatically tag every git commit with AI usage metadata — models, tokens, prompts, and cost signals. Works with VS Code Copilot,  [GitHub Copilot CLI](https://github.com/features/copilot/cli) & OpenCode. All local. Zero config.**
 
 [![Version](https://img.shields.io/visual-studio-marketplace/v/YoavLax.ai-contribution-tracker?style=flat-square&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=YoavLax.ai-contribution-tracker)
 [![License](https://img.shields.io/github/license/YoavLax/AI-Contribution-Tracker?style=flat-square)](LICENSE)
@@ -132,7 +132,7 @@ A global `commit-msg` hook (auto-installed via `git config --global core.hooksPa
 
 ### 5. OpenCode Integration
 
-The extension ships with a standalone OpenCode plugin that hooks into OpenCode's session lifecycle events using the same flag-file mechanism as the Copilot hooks. Install it once and every git commit made from an OpenCode session is automatically tagged.
+The extension integrates with OpenCode via the [`@rachel_rotenberg/ai-contribution-tracker`](https://www.npmjs.com/package/@rachel_rotenberg/ai-contribution-tracker) npm plugin, which hooks into OpenCode's session lifecycle events using the same flag-file mechanism as the Copilot hooks. **The plugin is automatically registered** in `~/.config/opencode/opencode.json` when the VS Code extension activates — no manual setup needed. OpenCode installs it via Bun on startup. Every git commit made from an OpenCode session is automatically tagged.
 
 | Hook / Event | What It Tracks |
 |---|---|
@@ -144,26 +144,18 @@ The extension ships with a standalone OpenCode plugin that hooks into OpenCode's
 
 **Installation:**
 
-**Recommended — npm package** (zero config, auto git-hook install):
+**Automatic** (recommended): The VS Code extension adds `@rachel_rotenberg/ai-contribution-tracker` to `~/.config/opencode/opencode.json` on activation. OpenCode picks it up on next startup. On Windows, the extension also detects WSL and writes the config into the default WSL distro automatically.
+
+**Manual** (for use without the VS Code extension):
 
 Add to your `~/.config/opencode/opencode.json`:
 ```json
 {
   "plugin": [
-    "@varonis/ai-contribution-tracker"
+    "@rachel_rotenberg/ai-contribution-tracker"
   ]
 }
 ```
-
-That's it. The plugin auto-installs the global git `commit-msg` hook on first run.
-
-**Manual** (copy file directly):
-```bash
-# Global
-cp packages/opencode-plugin/index.ts ~/.config/opencode/plugin/ai-contribution-tracker.ts
-```
-
-> **Note:** The npm package auto-installs the git hook. For manual installation, you also need the global `commit-msg` hook — see the VS Code extension or run the plugin once via npm to set it up.
 
 **Example output with OpenCode session:**
 ```

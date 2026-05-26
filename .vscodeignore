@@ -17,3 +17,8 @@ node_modules/**
 esbuild.js
 AGENTIC_DETECTION_PLAN.md
 session-repo-map.json
+packages/**
+pending/**
+scripts/**
+MIGRATION_REMOVAL_CHECKLIST.md
+README-NotForPublish.md

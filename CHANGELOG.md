@@ -1,6 +1,17 @@
 # Change Log
 
 All notable changes to the "AI Contribution Tracker" extension will be documented in this file.
+## [2.3.0] - 2026-05-25
+
+### Added
+- **OpenCode plugin integration**: AI contributions made via [OpenCode](https://opencode.ai) sessions are now tracked automatically. The extension registers the `@rachel_rotenberg/ai-contribution-tracker` npm plugin in `~/.config/opencode/opencode.json` on activation — OpenCode installs it via Bun at startup.
+- **Windows/WSL support for OpenCode**: On Windows, the extension detects the default WSL distro and writes the OpenCode config there as well, since OpenCode runs inside WSL.
+- **OpenCode event tracking**: session lifecycle events (`session.created`, `chat.message`, `message.updated`, `tool.execute.after`, `session.idle`) are captured with per-model token breakdowns and sub-agent tracking.
+- **PluginModule export format**: OpenCode plugin now exports the `{ id, server }` format required by OpenCode 1.15.x, preventing the `null.config` crash.
+
+### Changed
+- OpenCode plugin distribution switched from bundled file copy to npm package registration — simpler and works cross-platform without path translation issues.
+
 ## [2.2.0] - 2026-05-19
 
 ### Added

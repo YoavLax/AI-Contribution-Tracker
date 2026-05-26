@@ -34,6 +34,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Setup Claude Code hooks (if Claude Code is installed)
     setupClaudeCodeHooks(context);
 
+    // Setup OpenCode plugin (auto-install to ~/.config/opencode/plugins/)
+    setupOpenCodePlugin(context);
+
     // Register cleanup command
     context.subscriptions.push(
         vscode.commands.registerCommand('aiTracker.removeClaudeCodeHooks', () => removeClaudeCodeHooks())
@@ -547,6 +550,78 @@ function setupClaudeCodeHooks(context: vscode.ExtensionContext): void {
 
     } catch (error) {
         logger.appendLine(`[Setup] ERROR setting up Claude Code hooks: ${error}`);
+    }
+}
+
+/**
+ * Register the OpenCode plugin via npm in ~/.config/opencode/opencode.json.
+ * OpenCode automatically installs npm plugins via Bun at startup.
+ *
+ * On Windows, OpenCode typically runs inside WSL so we also write the config
+ * into the default WSL distro's ~/.config/opencode/ when WSL is available.
+ */
+function setupOpenCodePlugin(_context: vscode.ExtensionContext): void {
+    const pluginName = '@rachel_rotenberg/ai-contribution-tracker';
+
+    // Always configure the native OS path (works for Linux, macOS, and native Windows)
+    const nativeConfigDir = path.join(os.homedir(), '.config', 'opencode');
+    addOpenCodePluginToConfig(nativeConfigDir, pluginName);
+
+    // On Windows, also configure in the default WSL distro
+    if (process.platform === 'win32') {
+        try {
+            const wslHome = execSync('wsl -e sh -c "echo $HOME"', { encoding: 'utf8', timeout: 5000 }).trim();
+            if (wslHome) {
+                const wslConfigDir = execSync(
+                    `wsl -e wslpath -w "${wslHome}/.config/opencode"`,
+                    { encoding: 'utf8', timeout: 5000 }
+                ).trim();
+                if (wslConfigDir) {
+                    addOpenCodePluginToConfig(wslConfigDir, pluginName);
+                }
+            }
+        } catch {
+            logger.appendLine('[Setup] WSL not available — skipping WSL OpenCode config');
+        }
+    }
+}
+
+/** Add the plugin to the "plugin" array in opencode.json if not already present. */
+function addOpenCodePluginToConfig(configDir: string, pluginName: string): void {
+    try {
+        fs.mkdirSync(configDir, { recursive: true });
+        const configPath = path.join(configDir, 'opencode.json');
+
+        let config: Record<string, unknown> = {};
+        if (fs.existsSync(configPath)) {
+            try {
+                config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            } catch {
+                fs.copyFileSync(configPath, configPath + '.bak');
+                config = {};
+            }
+        }
+
+        let plugins = config.plugin as Array<string | [string, Record<string, unknown>]> | undefined;
+        if (!Array.isArray(plugins)) {
+            plugins = [];
+        }
+
+        // Check if already registered (plain string or tuple form)
+        const alreadyRegistered = plugins.some(
+            p => (typeof p === 'string' ? p : p[0]) === pluginName
+        );
+        if (alreadyRegistered) {
+            logger.appendLine(`[Setup] OpenCode plugin already configured: ${configPath}`);
+            return;
+        }
+
+        plugins.push(pluginName);
+        config.plugin = plugins;
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+        logger.appendLine(`[Setup] ✓ Added OpenCode plugin to: ${configPath}`);
+    } catch (error) {
+        logger.appendLine(`[Setup] ERROR configuring OpenCode plugin at ${configDir}: ${error}`);
     }
 }
 

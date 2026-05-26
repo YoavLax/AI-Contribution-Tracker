@@ -6,8 +6,6 @@
  * working in, even when OpenCode opens a parent directory with multiple repos.
  */
 import type { Plugin } from "@opencode-ai/plugin" with { "resolution-mode": "import" };
-// Workaround: @opencode-ai/plugin references HeadersInit which is missing in Node types
-declare global { type HeadersInit = unknown; }
 import * as fs from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
@@ -240,5 +238,10 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
         },
     };
 };
-export default AIContributionTracker;
+
+// ─── PluginModule wrapper (opencode 1.15.x expects { id, server }) ──
+export default {
+    id: "ai-contribution-tracker",
+    server: AIContributionTracker,
+};
 export { AIContributionTracker, extractSessionId };
