@@ -9,3 +9,6 @@ github-sync-service/
 
 agentic-dashboard/
 github-sync-service/
+packages/opencode-plugin/*.js
+packages/opencode-plugin/*.js.map
+.sisyphus/
