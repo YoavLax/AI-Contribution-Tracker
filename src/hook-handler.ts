@@ -265,6 +265,11 @@ export function getFlagPath(gitDir: string): string {
     return path.join(gitDir, FLAG_FILENAME);
 }
 
+/** Strip zero-width and other invisible Unicode characters from text destined for flag files / commit messages. */
+function stripInvisibleChars(text: string): string {
+    return text.replace(/[^\x20-\x7E\n]/g, '');
+}
+
 /**
  * Convert an ISO timestamp (UTC) to the local-time format used in VS Code log files.
  * Log format: "2026-04-19 13:12:00.000"
@@ -840,12 +845,12 @@ function writeFlagEagerly(gitDir: string, state: TrackerState): void {
             const combined = agentParts.length > 0
                 ? `Impacted by AI (Inline + ${agentParts.join(' | ')})`
                 : 'Impacted by AI (Inline)';
-            fs.writeFileSync(flagPath, combined);
+            fs.writeFileSync(flagPath, stripInvisibleChars(combined));
         } else {
-            fs.writeFileSync(flagPath, newMarker);
+            fs.writeFileSync(flagPath, stripInvisibleChars(newMarker));
         }
     } else {
-        fs.writeFileSync(flagPath, newMarker);
+        fs.writeFileSync(flagPath, stripInvisibleChars(newMarker));
     }
 }
 
@@ -866,8 +871,11 @@ export function handleSessionStart(input: HookInput, gitDir: string): void {
     }
     // Normalize source: Copilot CLI reports "new" but we label it "copilot" for clarity
     const source = input.source === 'new' ? 'copilot' : input.source;
-    if (source && !state.mainAgentTypes.includes(source)) {
-        state.mainAgentTypes.push(source);
+    if (source) {
+        const sanitized = stripInvisibleChars(source);
+        if (!state.mainAgentTypes.includes(sanitized)) {
+            state.mainAgentTypes.push(sanitized);
+        }
     }
     saveState(gitDir, state);
 }
@@ -884,8 +892,11 @@ export function handleUserPromptSubmit(input: HookInput, gitDir: string): void {
     const hasUserText = typeof input.prompt === 'string' && input.prompt.trim().length > 0;
     if (state.activeSubagents === 0 && hasUserText) {
         state.promptCount += 1;
-        if (source && !state.mainAgentTypes.includes(source)) {
-            state.mainAgentTypes.push(source);
+        if (source) {
+            const sanitized = stripInvisibleChars(source);
+            if (!state.mainAgentTypes.includes(sanitized)) {
+                state.mainAgentTypes.push(sanitized);
+            }
         }
     }
     saveState(gitDir, state);
@@ -950,7 +961,7 @@ export function handleStop(input: HookInput, gitDir: string): void {
         // Use producer as main agent type fallback when no agent data at all
         // e.g. "copilot-agent" → "copilot"
         if (meta.producer && state.mainAgentTypes.length === 0 && state.subagentTypes.length === 0) {
-            const agentName = meta.producer.replace(/-agent$/, '');
+            const agentName = stripInvisibleChars(meta.producer.replace(/-agent$/, ''));
             state.mainAgentTypes.push(agentName);
         }
     }
@@ -1033,13 +1044,13 @@ export function handleStop(input: HookInput, gitDir: string): void {
                 const combined = agentParts.length > 0
                     ? `Impacted by AI (Inline + ${agentParts.join(' | ')})`
                     : 'Impacted by AI (Inline)';
-                fs.writeFileSync(flagPath, combined);
+                fs.writeFileSync(flagPath, stripInvisibleChars(combined));
             } else {
                 // Overwrite with latest agent data
-                fs.writeFileSync(flagPath, newMarker);
+                fs.writeFileSync(flagPath, stripInvisibleChars(newMarker));
             }
         } else {
-            fs.writeFileSync(flagPath, newMarker);
+            fs.writeFileSync(flagPath, stripInvisibleChars(newMarker));
         }
     }
 

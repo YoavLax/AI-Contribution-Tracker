@@ -16,3 +16,4 @@ session-repo-map.json
 # OpenCode plugin compiled artifacts
 packages/opencode-plugin/*.js
 packages/opencode-plugin/*.js.map
+.sisyphus/
