@@ -80,8 +80,10 @@ function writeFlag(g: string, s: TrackerState) {
         const ex = fs.readFileSync(fp, "utf8").trim();
         if (ex.includes("Inline")) {
             // Merge: preserve Inline marker, add agent data
-            const inner = marker.match(/\((.+)\)$/)?.[1];
-            fs.writeFileSync(fp, inner ? `Impacted by AI (Inline + ${inner})` : "Impacted by AI (Inline)");
+            const inner = marker.split('\n')[0].match(/\((.+)\)$/)?.[1];
+            const coAuthorLine = marker.split('\n').slice(1).join('\n');
+            const merged = inner ? `Impacted by AI (Inline + ${inner})` : "Impacted by AI (Inline)";
+            fs.writeFileSync(fp, coAuthorLine ? `${merged}\n${coAuthorLine}` : merged);
             return;
         }
         // Always overwrite with latest state — state only grows, never shrinks

@@ -1,6 +1,4 @@
-// AI tracker test
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
+
 import * as vscode from 'vscode';
 import { CopilotTracker } from './tracker';
 import * as fs from 'fs';
@@ -811,7 +809,6 @@ function setupActiveWorkspaceFile(context: vscode.ExtensionContext): void {
     }
 }
 
-// Remove installGitHook function since it's moved to tracker
 export function deactivate() {
     logger.appendLine('DEACTIVATE: Extension stopping...');
 }
