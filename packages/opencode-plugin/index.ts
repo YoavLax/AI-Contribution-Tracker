@@ -218,8 +218,11 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                     if (info.role !== "assistant" || !info.finish || !info.tokens) return;
                     const modelId = info.modelID ?? "unknown";
                     const msgId = info.id || info.messageID;
-                    const cur: TokenTotals = { inputTokens: Number(info.tokens.input ?? 0), outputTokens: Number(info.tokens.output ?? 0),
-                        cachedTokens: Number(info.tokens.cache?.read ?? 0), reasoningTokens: Number(info.tokens.reasoning ?? 0) };
+                    const rawInput = Number(info.tokens.input ?? 0);
+                    const cacheRead = Number(info.tokens.cache?.read ?? 0);
+                    const totalInput = Number(info.tokens.total ?? 0) || (rawInput + cacheRead);
+                    const cur: TokenTotals = { inputTokens: totalInput, outputTokens: Number(info.tokens.output ?? 0),
+                        cachedTokens: cacheRead, reasoningTokens: Number(info.tokens.reasoning ?? 0) };
                     const prev = msgId ? sess.lastTokens.get(msgId) : undefined;
                     // Clamp deltas to >= 0 (snapshots can decrease; we never subtract)
                     const delta: TokenTotals = {

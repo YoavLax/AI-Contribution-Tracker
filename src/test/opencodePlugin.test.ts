@@ -408,7 +408,7 @@ suite('OpenCode Plugin — token tracking', function () {
 
         const state = loadState(gitDir);
         assert.ok(state.tokensByModel['claude-sonnet-4-6'], 'Should have claude model entry');
-        assert.strictEqual(state.tokensByModel['claude-sonnet-4-6'].inputTokens, 50000);
+        assert.strictEqual(state.tokensByModel['claude-sonnet-4-6'].inputTokens, 95000, 'inputTokens = fresh (50k) + cached (45k)');
         assert.strictEqual(state.tokensByModel['claude-sonnet-4-6'].outputTokens, 633);
         assert.strictEqual(state.tokensByModel['claude-sonnet-4-6'].cachedTokens, 45000);
     });
