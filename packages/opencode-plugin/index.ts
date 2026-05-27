@@ -83,8 +83,10 @@ function writeFlag(g: string, s: TrackerState) {
         const ex = fs.readFileSync(fp, "utf8").trim();
         if (ex.includes("Inline")) {
             // Merge: preserve Inline marker, add agent data
-            const inner = marker.match(/\((.+)\)$/)?.[1];
-            fs.writeFileSync(fp, inner ? `Impacted by AI (Inline + ${inner})` : "Impacted by AI (Inline)");
+            const inner = marker.split('\n')[0].match(/\((.+)\)$/)?.[1];
+            const coAuthorLine = marker.split('\n').slice(1).join('\n');
+            const merged = inner ? `Impacted by AI (Inline + ${inner})` : "Impacted by AI (Inline)";
+            fs.writeFileSync(fp, coAuthorLine ? `${merged}\n${coAuthorLine}` : merged);
             return;
         }
         // Always overwrite with latest state — state only grows, never shrinks
@@ -216,8 +218,11 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                     if (info.role !== "assistant" || !info.finish || !info.tokens) return;
                     const modelId = info.modelID ?? "unknown";
                     const msgId = info.id || info.messageID;
-                    const cur: TokenTotals = { inputTokens: Number(info.tokens.input ?? 0), outputTokens: Number(info.tokens.output ?? 0),
-                        cachedTokens: Number(info.tokens.cache?.read ?? 0), reasoningTokens: Number(info.tokens.reasoning ?? 0) };
+                    const rawInput = Number(info.tokens.input ?? 0);
+                    const cacheRead = Number(info.tokens.cache?.read ?? 0);
+                    const totalInput = Number(info.tokens.total ?? 0) || (rawInput + cacheRead);
+                    const cur: TokenTotals = { inputTokens: totalInput, outputTokens: Number(info.tokens.output ?? 0),
+                        cachedTokens: cacheRead, reasoningTokens: Number(info.tokens.reasoning ?? 0) };
                     const prev = msgId ? sess.lastTokens.get(msgId) : undefined;
                     // Clamp deltas to >= 0 (snapshots can decrease; we never subtract)
                     const delta: TokenTotals = {
