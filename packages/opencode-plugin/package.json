@@ -1,6 +1,6 @@
 {
-  "name": "@varonis/ai-contribution-tracker",
-  "version": "1.0.0",
+  "name": "@rachel_rotenberg/ai-contribution-tracker",
+  "version": "1.0.18",
   "description": "OpenCode plugin \u2014 tracks AI coding sessions and tags git commits with Impacted by AI markers",
   "main": "index.ts",
   "types": "index.ts",
@@ -24,7 +24,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Varonis-Systems/AI-Contribution-Tracker"
+    "url": "https://github.com/YoavLax/AI-Contribution-Tracker"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.0.0"
