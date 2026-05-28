@@ -60,6 +60,13 @@ function loadState(g: string): TrackerState {
 }
 function saveState(g: string, s: TrackerState) { s.lastUpdated = new Date().toISOString(); fs.writeFileSync(getStatePath(g), JSON.stringify(s, null, 2)); }
 function formatK(n: number) { return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n); }
+function buildCoAuthoredBy(s: TrackerState): string {
+    const models = s.models.join(", ");
+    const coAuthorName = models || s.promptCount > 0
+        ? `OpenCode (${[models, s.promptCount > 0 ? `${s.promptCount}p` : ""].filter(Boolean).join(", ")})`
+        : "OpenCode";
+    return `Co-authored-by: ${coAuthorName} <noreply@opencode.dev>`;
+}
 function formatMarker(s: TrackerState): string {
     const p: string[] = [];
     const ma = [...new Set(s.mainAgentTypes)]; if (ma.length) p.push(`Agent mode: ${ma.join(", ")}`);
@@ -74,7 +81,8 @@ function formatMarker(s: TrackerState): string {
         if (t.reasoningTokens > 0) r += ` +${formatK(t.reasoningTokens)} reasoning`;
         return r;
     }).join(" | ")}`); }
-    return p.length ? `Impacted by AI (${p.join(" | ")})` : "Impacted by AI";
+    const marker = p.length ? `Impacted by AI (${p.join(" | ")})` : "Impacted by AI";
+    return `${marker}\n${buildCoAuthoredBy(s)}`;
 }
 function writeFlag(g: string, s: TrackerState) {
     if (s.promptCount === 0 && s.mainAgentTypes.length === 0 && s.subagentTypes.length === 0 && s.subagentCount === 0 && Object.keys(s.tokensByModel).length === 0) return;
