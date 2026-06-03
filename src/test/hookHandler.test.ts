@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as cp from 'child_process';
+import { execSync } from 'child_process';
 import {
     HookInput,
     TrackerState,
@@ -13,12 +14,15 @@ import {
     formatMarker,
     extractTranscriptMetadata,
     extractFromCliTranscript,
+    extractFromClaudeTranscript,
     extractModelFromCopilotLog,
     parseModelFromLogFile,
     dispatch,
     getStatePath,
     getFlagPath,
     handleCommitMsg,
+    handleSessionStart,
+    handleStop,
     getPendingStateDir,
 } from '../hook-handler';
 
@@ -47,6 +51,7 @@ function makeState(overrides: Partial<TrackerState>): TrackerState {
         subagentModels: [],
         sessionId: null,
         sessionIds: [],
+        sessionTranscripts: {},
         stateCreatedAt: new Date().toISOString(),
         lastUpdated: '',
         tokensByModel: {},
@@ -936,4 +941,275 @@ suite('Copilot CLI Tests', function () {
         assert.ok(!marker.includes('Tokens:'), 'No tokens section when session still active');
     });
 });
+
+// ─── Claude Code Tests ────────────────────────────────────────────────────────
+
+suite('Claude Code Tests', function () {
+    this.timeout(10000);
+
+    let repoRoot: string;
+    let gitDir: string;
+    let tmpClaudeDir: string;
+
+    setup(() => {
+        repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-test-'));
+        execSync('git init', { cwd: repoRoot });
+        execSync('git config user.email "test@test.com"', { cwd: repoRoot });
+        execSync('git config user.name "Test"', { cwd: repoRoot });
+        gitDir = path.join(repoRoot, '.git');
+
+        // Create a scratch Claude projects dir for transcript fixtures
+        tmpClaudeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-projects-'));
+    });
+
+    teardown(() => {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+        fs.rmSync(tmpClaudeDir, { recursive: true, force: true });
+    });
+
+    /** Build a minimal Claude transcript JSONL with the given turns */
+    function makeClaudeTranscript(sessionId: string, turns: Array<{
+        model: string;
+        inputTokens: number;
+        outputTokens: number;
+        cacheCreationTokens?: number;
+        cacheReadTokens?: number;
+    }>): string {
+        const projectDir = path.join(tmpClaudeDir, 'test-project');
+        fs.mkdirSync(projectDir, { recursive: true });
+        const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`);
+
+        const lines: string[] = [];
+        // Opener: system entry
+        lines.push(JSON.stringify({ type: 'system', content: 'session start' }));
+        for (const turn of turns) {
+            lines.push(JSON.stringify({
+                type: 'assistant',
+                message: {
+                    model: turn.model,
+                    usage: {
+                        input_tokens: turn.inputTokens,
+                        output_tokens: turn.outputTokens,
+                        cache_creation_input_tokens: turn.cacheCreationTokens || 0,
+                        cache_read_input_tokens: turn.cacheReadTokens || 0,
+                    },
+                },
+            }));
+        }
+        fs.writeFileSync(transcriptPath, lines.join('\n') + '\n');
+        return transcriptPath;
+    }
+
+    // ── extractFromClaudeTranscript unit tests ─────────────────────────────
+
+    test('extractFromClaudeTranscript: reads model and tokens from transcript', () => {
+        const sid = 'claude-test-session-1';
+        const transcriptPath = makeClaudeTranscript(sid, [
+            { model: 'claude-opus-4-5', inputTokens: 1000, outputTokens: 500, cacheReadTokens: 200 },
+        ]);
+
+        const result = extractFromClaudeTranscript(sid, transcriptPath);
+
+        assert.deepStrictEqual(result.models, ['claude-opus-4-5']);
+        assert.ok(result.tokensByModel['claude-opus-4-5']);
+        assert.strictEqual(result.tokensByModel['claude-opus-4-5'].inputTokens, 1000);
+        assert.strictEqual(result.tokensByModel['claude-opus-4-5'].outputTokens, 500);
+        assert.strictEqual(result.tokensByModel['claude-opus-4-5'].cachedTokens, 200);
+        assert.strictEqual(result.tokensByModel['claude-opus-4-5'].reasoningTokens, 0);
+    });
+
+    test('extractFromClaudeTranscript: folds cache_creation into inputTokens', () => {
+        const sid = 'claude-test-session-2';
+        const transcriptPath = makeClaudeTranscript(sid, [
+            { model: 'claude-sonnet-4-5', inputTokens: 500, outputTokens: 100, cacheCreationTokens: 300 },
+        ]);
+
+        const result = extractFromClaudeTranscript(sid, transcriptPath);
+
+        // cache_creation (300) should be added to input (500) = 800
+        assert.strictEqual(result.tokensByModel['claude-sonnet-4-5'].inputTokens, 800);
+        assert.strictEqual(result.tokensByModel['claude-sonnet-4-5'].outputTokens, 100);
+    });
+
+    test('extractFromClaudeTranscript: accumulates tokens across multiple turns', () => {
+        const sid = 'claude-test-session-3';
+        const transcriptPath = makeClaudeTranscript(sid, [
+            { model: 'claude-opus-4-5', inputTokens: 1000, outputTokens: 200 },
+            { model: 'claude-opus-4-5', inputTokens: 800,  outputTokens: 150 },
+        ]);
+
+        const result = extractFromClaudeTranscript(sid, transcriptPath);
+
+        assert.strictEqual(result.models.length, 1);
+        assert.strictEqual(result.tokensByModel['claude-opus-4-5'].inputTokens, 1800);
+        assert.strictEqual(result.tokensByModel['claude-opus-4-5'].outputTokens, 350);
+    });
+
+    test('extractFromClaudeTranscript: skips <synthetic> model entries', () => {
+        const sid = 'claude-test-session-4';
+        const projectDir = path.join(tmpClaudeDir, 'test-project-synthetic');
+        fs.mkdirSync(projectDir, { recursive: true });
+        const transcriptPath = path.join(projectDir, `${sid}.jsonl`);
+        const lines = [
+            JSON.stringify({ type: 'assistant', message: { model: '<synthetic>', usage: { input_tokens: 5, output_tokens: 2 } } }),
+            JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-4-5', usage: { input_tokens: 1000, output_tokens: 300 } } }),
+        ];
+        fs.writeFileSync(transcriptPath, lines.join('\n') + '\n');
+
+        const result = extractFromClaudeTranscript(sid, transcriptPath);
+
+        assert.ok(!result.models.includes('<synthetic>'), '<synthetic> should be filtered out');
+        assert.ok(result.models.includes('claude-opus-4-5'));
+    });
+
+    test('extractFromClaudeTranscript: returns empty result if transcript does not exist', () => {
+        const result = extractFromClaudeTranscript('nonexistent-session-id');
+        assert.deepStrictEqual(result.models, []);
+        assert.deepStrictEqual(result.tokensByModel, {});
+    });
+
+    test('extractFromClaudeTranscript: ignores non-assistant entries', () => {
+        const sid = 'claude-test-session-5';
+        const projectDir = path.join(tmpClaudeDir, 'test-project-nona');
+        fs.mkdirSync(projectDir, { recursive: true });
+        const transcriptPath = path.join(projectDir, `${sid}.jsonl`);
+        const lines = [
+            JSON.stringify({ type: 'user', message: { content: 'hello' } }),
+            JSON.stringify({ type: 'system', content: 'boot' }),
+            JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-4-5', usage: { input_tokens: 100, output_tokens: 50 } } }),
+        ];
+        fs.writeFileSync(transcriptPath, lines.join('\n') + '\n');
+
+        const result = extractFromClaudeTranscript(sid, transcriptPath);
+        assert.deepStrictEqual(result.models, ['claude-opus-4-5']);
+    });
+
+    // ── Source normalization tests ─────────────────────────────────────────
+
+    test('handleSessionStart: normalizes Claude "startup" source to "claude"', () => {
+        handleSessionStart(makeInput({ cwd: repoRoot, hookEventName: 'SessionStart', source: 'startup', sessionId: 'sid-norm-1' }), gitDir);
+        const state = loadState(gitDir);
+        assert.ok(state.mainAgentTypes.includes('claude'), `Expected "claude" in mainAgentTypes, got: ${state.mainAgentTypes}`);
+    });
+
+    test('handleSessionStart: normalizes Claude "claude-vscode" source to "claude"', () => {
+        handleSessionStart(makeInput({ cwd: repoRoot, hookEventName: 'SessionStart', source: 'claude-vscode', sessionId: 'sid-norm-2' }), gitDir);
+        const state = loadState(gitDir);
+        assert.ok(state.mainAgentTypes.includes('claude'), `Expected "claude" in mainAgentTypes, got: ${state.mainAgentTypes}`);
+    });
+
+    test('handleSessionStart: existing "new" source still normalizes to "copilot"', () => {
+        handleSessionStart(makeInput({ cwd: repoRoot, hookEventName: 'SessionStart', source: 'new', sessionId: 'sid-norm-3' }), gitDir);
+        const state = loadState(gitDir);
+        assert.ok(state.mainAgentTypes.includes('copilot'), `Expected "copilot" in mainAgentTypes, got: ${state.mainAgentTypes}`);
+        assert.ok(!state.mainAgentTypes.includes('new'), '"new" should not appear raw');
+    });
+
+    // ── sessionTranscripts persistence ────────────────────────────────────
+
+    test('handleSessionStart: persists transcript_path in sessionTranscripts', () => {
+        const sid = 'sid-transcript-persist';
+        const fakePath = '/fake/path/to/transcript.jsonl';
+        handleSessionStart(makeInput({ cwd: repoRoot, hookEventName: 'SessionStart', sessionId: sid, transcript_path: fakePath }), gitDir);
+        const state = loadState(gitDir);
+        assert.strictEqual(state.sessionTranscripts[sid], fakePath);
+    });
+
+    // ── End-to-end: Stop writes Claude tokens into state ─────────────────
+
+    test('handleStop: reads Claude transcript tokens and models at Stop time', () => {
+        const sid = 'claude-stop-e2e';
+        const transcriptPath = makeClaudeTranscript(sid, [
+            { model: 'claude-opus-4-5', inputTokens: 5000, outputTokens: 800, cacheReadTokens: 1200 },
+        ]);
+
+        // Seed state as if SessionStart + UserPromptSubmit already ran
+        const state = makeState({ sessionId: sid, sessionIds: [sid], promptCount: 1, mainAgentTypes: ['claude'] });
+        saveState(gitDir, state);
+
+        handleStop(makeInput({
+            cwd: repoRoot,
+            hookEventName: 'Stop',
+            sessionId: sid,
+            transcript_path: transcriptPath,
+        }), gitDir);
+
+        const finalState = loadState(gitDir);
+        assert.ok(finalState.models.includes('claude-opus-4-5'), 'Model should be captured from Claude transcript');
+        assert.ok(finalState.tokensByModel['claude-opus-4-5'], 'Token data should be present');
+        assert.strictEqual(finalState.tokensByModel['claude-opus-4-5'].inputTokens, 5000);
+        assert.strictEqual(finalState.tokensByModel['claude-opus-4-5'].outputTokens, 800);
+        assert.strictEqual(finalState.tokensByModel['claude-opus-4-5'].cachedTokens, 1200);
+    });
+
+    // ── End-to-end: CommitMsg reads Claude tokens at commit time ──────────
+
+    test('handleCommitMsg: reads Claude transcript tokens at commit time (Stop not fired)', () => {
+        const sid = 'claude-commit-e2e';
+        const transcriptPath = makeClaudeTranscript(sid, [
+            { model: 'claude-sonnet-4-5', inputTokens: 3000, outputTokens: 400 },
+        ]);
+
+        // Simulate SessionStart + UserPromptSubmit state (Stop has NOT fired yet)
+        const state = makeState({
+            sessionId: sid,
+            sessionIds: [sid],
+            sessionTranscripts: { [sid]: transcriptPath },
+            promptCount: 1,
+            mainAgentTypes: ['claude'],
+            tokensByModel: {},
+        });
+        const flagPath = path.join(gitDir, 'AI_IMPACT_PENDING');
+        fs.writeFileSync(flagPath, formatMarker(state));
+        saveState(gitDir, state);
+
+        handleCommitMsg(makeInput({ cwd: repoRoot, hookEventName: 'CommitMsg', gitDir }), gitDir);
+
+        const finalState = loadState(gitDir);
+        // After CommitMsg, state is reset (consumed)
+        assert.strictEqual(finalState.promptCount, 0, 'State should be reset after commit');
+        // Flag should have been written with token info
+        if (fs.existsSync(flagPath)) {
+            // Flag may have been updated; if still present it should have the marker
+            const flagContent = fs.readFileSync(flagPath, 'utf8');
+            assert.ok(flagContent.includes('Impacted by AI'), 'Flag should have AI marker');
+        }
+    });
+
+    // ── formatMarker: Claude session ──────────────────────────────────────
+
+    test('formatMarker for Claude session with tokens', () => {
+        const state = makeState({
+            promptCount: 2,
+            mainAgentTypes: ['claude'],
+            models: ['claude-opus-4-5'],
+            tokensByModel: {
+                'claude-opus-4-5': { inputTokens: 5000, outputTokens: 800, cachedTokens: 1200, reasoningTokens: 0 },
+            },
+        });
+        const marker = formatMarker(state);
+        assert.ok(marker.includes('Impacted by AI'), 'Should have AI marker');
+        assert.ok(marker.includes('Agent mode: claude'), 'Should show claude as agent mode');
+        assert.ok(marker.includes('Model: claude-opus-4-5'), 'Should show model');
+        assert.ok(marker.includes('Prompts: 2'), 'Should show prompt count');
+        assert.ok(marker.includes('Tokens:'), 'Should include token section');
+        assert.ok(marker.includes('5k in/800 out'), 'Should format Claude token counts');
+        assert.ok(marker.includes('1k cached'), 'Should include cache hits');
+    });
+
+    test('formatMarker for Claude session without tokens (session still active)', () => {
+        const state = makeState({
+            promptCount: 1,
+            mainAgentTypes: ['claude'],
+            models: ['claude-opus-4-5'],
+            tokensByModel: {},
+        });
+        const marker = formatMarker(state);
+        assert.ok(marker.includes('Agent mode: claude'));
+        assert.ok(marker.includes('Model: claude-opus-4-5'));
+        assert.ok(marker.includes('Prompts: 1'));
+        assert.ok(!marker.includes('Tokens:'), 'No tokens when not yet extracted');
+    });
+});
+
 

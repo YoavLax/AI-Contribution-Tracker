@@ -57,6 +57,8 @@ export interface TrackerState {
     sessionId: string | null;
     /** All session IDs that contributed since the last commit (for transcript reading) */
     sessionIds: string[];
+    /** Claude transcript paths keyed by session ID (persisted at SessionStart/Stop for CommitMsg-time reading) */
+    sessionTranscripts: Record<string, string>;
     stateCreatedAt: string;
     lastUpdated: string;
     // Token usage from OTEL SQLite DB (populated at Stop event), keyed by response model
@@ -306,6 +308,9 @@ export function loadState(gitDir: string): TrackerState {
             if (!Array.isArray(parsed.sessionIds)) {
                 parsed.sessionIds = parsed.sessionId ? [parsed.sessionId] : [];
             }
+            if (typeof parsed.sessionTranscripts !== 'object' || parsed.sessionTranscripts === null) {
+                parsed.sessionTranscripts = {};
+            }
             if (!Array.isArray(parsed.subagentModels)) {
                 parsed.subagentModels = [];
             }
@@ -341,6 +346,7 @@ export function loadState(gitDir: string): TrackerState {
         subagentModels: [],
         sessionId: null,
         sessionIds: [],
+        sessionTranscripts: {},
         stateCreatedAt: new Date().toISOString(),
         lastUpdated: new Date().toISOString(),
         tokensByModel: {},
@@ -500,6 +506,109 @@ export function extractFromCliTranscript(sessionId: string, transcriptPath?: str
                                 reasoningTokens: data.usage.reasoningTokens || 0,
                             };
                             if (!result.models.includes(model)) { result.models.push(model); }
+                        }
+                    }
+                }
+            } catch { /* skip unparseable lines */ }
+        }
+    } catch { /* best effort */ }
+
+    return result;
+}
+
+// ─── Claude Code Transcript Parsing ────────────────────────────────────────
+
+/**
+ * Derive the expected Claude Code transcript path for a session ID and cwd.
+ * Claude Code stores transcripts at:
+ *   ~/.claude/projects/<cwd-dashified>/<sessionId>.jsonl
+ * where cwd-dashified replaces [:\/] with '-'.
+ */
+export function deriveClaudeTranscriptPath(sessionId: string, cwd?: string): string {
+    const home = os.homedir();
+    if (cwd) {
+        const dashified = cwd.replace(/[:\\/]/g, '-');
+        return path.join(home, '.claude', 'projects', dashified, `${sessionId}.jsonl`);
+    }
+    // Without cwd, search all project dirs for a matching session file
+    const projectsDir = path.join(home, '.claude', 'projects');
+    if (fs.existsSync(projectsDir)) {
+        for (const project of fs.readdirSync(projectsDir)) {
+            const candidate = path.join(projectsDir, project, `${sessionId}.jsonl`);
+            if (fs.existsSync(candidate)) {
+                return candidate;
+            }
+        }
+    }
+    return '';
+}
+
+/**
+ * Extract model names and per-turn token usage from a Claude Code transcript.
+ *
+ * Claude Code transcript = ~/.claude/projects/<cwd-dashified>/<sessionId>.jsonl
+ * Schema (per-turn, unlike Copilot CLI which only has totals at shutdown):
+ *   type:"assistant" entries carry message.model and message.usage with:
+ *     input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens
+ *
+ * Token mapping (per plan decision 1):
+ *   input_tokens + cache_creation_input_tokens → inputTokens  (cache creation counts as input cost)
+ *   output_tokens                              → outputTokens
+ *   cache_read_input_tokens                    → cachedTokens
+ *   (no reasoning field in Claude Code today)  → reasoningTokens = 0
+ *
+ * Returns same shape as extractFromCliTranscript for drop-in use.
+ */
+export function extractFromClaudeTranscript(sessionId: string, transcriptPath?: string): {
+    models: string[];
+    tokensByModel: Record<string, TokenTotals>;
+} {
+    const result: { models: string[]; tokensByModel: Record<string, TokenTotals> } = {
+        models: [],
+        tokensByModel: {},
+    };
+
+    // Prefer explicit path, then derive by searching ~/.claude/projects/
+    const tp = transcriptPath || deriveClaudeTranscriptPath(sessionId);
+    if (!tp || !fs.existsSync(tp)) { return result; }
+
+    try {
+        const content = fs.readFileSync(tp, 'utf8');
+        for (const line of content.split('\n')) {
+            if (!line.trim()) { continue; }
+            try {
+                const entry = JSON.parse(line);
+                // Only process assistant turns
+                if (entry.type !== 'assistant') { continue; }
+                const msg = entry.message;
+                if (!msg) { continue; }
+
+                // Extract model — skip synthetic/error entries
+                const model: string = msg.model || '';
+                if (!model || model === '<synthetic>') { continue; }
+
+                if (!result.models.includes(model)) { result.models.push(model); }
+
+                // Accumulate token usage per model
+                const usage = msg.usage;
+                if (usage) {
+                    const inputTokens = (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
+                    const outputTokens = usage.output_tokens || 0;
+                    const cachedTokens = usage.cache_read_input_tokens || 0;
+
+                    if (inputTokens > 0 || outputTokens > 0) {
+                        const existing = result.tokensByModel[model];
+                        if (existing) {
+                            existing.inputTokens  += inputTokens;
+                            existing.outputTokens += outputTokens;
+                            existing.cachedTokens += cachedTokens;
+                        } else {
+                            result.tokensByModel[model] = {
+                                inputTokens,
+                                outputTokens,
+                                cachedTokens,
+                                reasoningTokens: 0,
+                            };
                         }
                     }
                 }
@@ -864,18 +973,32 @@ export function handleSessionStart(input: HookInput, gitDir: string): void {
             state.sessionIds.push(sid);
         }
     }
-    // Normalize source: Copilot CLI reports "new" but we label it "copilot" for clarity
-    const source = input.source === 'new' ? 'copilot' : input.source;
+    // Normalize source:
+    //   Copilot CLI reports "new"         → "copilot"
+    //   Claude Code reports "startup" or entrypoint "claude-vscode" → "claude"
+    const rawSource = input.source || '';
+    const source = rawSource === 'new' ? 'copilot'
+        : (rawSource === 'startup' || rawSource === 'claude-vscode') ? 'claude'
+        : rawSource || undefined;
     if (source && !state.mainAgentTypes.includes(source)) {
         state.mainAgentTypes.push(source);
+    }
+    // Persist Claude transcript path if provided at SessionStart (used at CommitMsg time)
+    if (input.transcript_path && sid) {
+        state.sessionTranscripts[sid] = input.transcript_path;
     }
     saveState(gitDir, state);
 }
 
 export function handleUserPromptSubmit(input: HookInput, gitDir: string): void {
     const state = loadState(gitDir);
-    // Normalize source: Copilot CLI reports "new" but we label it "copilot" for clarity
-    const source = input.source === 'new' ? 'copilot' : input.source;
+    // Normalize source:
+    //   Copilot CLI reports "new"         → "copilot"
+    //   Claude Code reports "startup" or entrypoint "claude-vscode" → "claude"
+    const rawSource = input.source || '';
+    const source = rawSource === 'new' ? 'copilot'
+        : (rawSource === 'startup' || rawSource === 'claude-vscode') ? 'claude'
+        : rawSource || undefined;
     // Only count as user prompt if:
     // 1. No subagent is currently active (VS Code fires UserPromptSubmit for subagent-delegated prompts too)
     // 2. The prompt field is non-empty — VS Code also fires UserPromptSubmit for agentic
@@ -938,6 +1061,29 @@ export function handleStop(input: HookInput, gitDir: string): void {
                 // CLI transcript is authoritative — overwrite any partial data
                 state.tokensByModel[model] = t;
             }
+        }
+    }
+
+    // Extract model/tokens from Claude Code transcript (per-turn, no race condition).
+    // Always attempt — each reader only understands its own JSONL schema (disjoint type fields),
+    // so running both readers against the same path produces no double-counting:
+    //   Copilot schema: type:"session.model_change" / "assistant.message" / "session.shutdown"
+    //   Claude schema:  type:"assistant" (not "assistant.message")
+    if (sessionId) {
+        const claudePath = input.transcript_path || state.sessionTranscripts[sessionId] || '';
+        const claudeData = extractFromClaudeTranscript(sessionId, claudePath || undefined);
+        for (const m of claudeData.models) {
+            if (!state.models.includes(m)) { state.models.push(m); }
+        }
+        // Claude transcripts have per-turn totals — authoritative when present
+        if (Object.keys(claudeData.tokensByModel).length > 0) {
+            for (const [model, t] of Object.entries(claudeData.tokensByModel)) {
+                state.tokensByModel[model] = t;
+            }
+        }
+        // Persist path for CommitMsg time (if Stop fires before commit)
+        if (claudePath && sessionId) {
+            state.sessionTranscripts[sessionId] = claudePath;
         }
     }
 
@@ -1071,6 +1217,7 @@ function resetStateAfterCommit(gitDir: string, currentState: TrackerState): void
         subagentModels: [],
         sessionId: '',                                   // cleared: consumed. Stop uses saveSessionRepo for routing.
         sessionIds: [],                                // consumed; new sessions will re-register
+        sessionTranscripts: {},                        // consumed; paths no longer needed
         stateCreatedAt: now,                           // next commit only sees data after this point
         lastUpdated: now,
         tokensByModel: {},
@@ -1154,6 +1301,28 @@ export function handleCommitMsg(input: HookInput, gitDir: string): void {
         }
         // Merge tokens (accumulate across sessions)
         for (const [model, t] of Object.entries(cliData.tokensByModel)) {
+            const existing = state.tokensByModel[model];
+            if (existing) {
+                existing.inputTokens += t.inputTokens;
+                existing.outputTokens += t.outputTokens;
+                existing.cachedTokens += t.cachedTokens;
+                existing.reasoningTokens += t.reasoningTokens;
+            } else {
+                state.tokensByModel[model] = { ...t };
+            }
+            stateChanged = true;
+        }
+    }
+
+    // Extract model/tokens from Claude Code transcripts (per-turn, no race condition)
+    // Use persisted transcript paths (set at SessionStart/Stop) or search ~/.claude/projects/
+    for (const sid of transcriptSessionIds) {
+        const claudePath = state.sessionTranscripts[sid] || '';
+        const claudeData = extractFromClaudeTranscript(sid, claudePath || undefined);
+        for (const m of claudeData.models) {
+            if (!state.models.includes(m)) { state.models.push(m); stateChanged = true; }
+        }
+        for (const [model, t] of Object.entries(claudeData.tokensByModel)) {
             const existing = state.tokensByModel[model];
             if (existing) {
                 existing.inputTokens += t.inputTokens;
