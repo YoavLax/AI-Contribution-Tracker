@@ -89,6 +89,29 @@ function appendOrCreateHook(hooksDir) {
     try { fs.chmodSync(hookPath, "755"); } catch { /* Windows */ }
 }
 
+const PASSTHROUGH_HOOKS = [
+    "pre-commit", "pre-push", "prepare-commit-msg",
+    "post-commit", "post-merge", "pre-rebase",
+];
+
+function ensurePassthroughHooks(hooksDir) {
+    for (const hookName of PASSTHROUGH_HOOKS) {
+        const hookPath = path.join(hooksDir, hookName);
+        if (fs.existsSync(hookPath)) continue;
+        const content = [
+            "#!/bin/sh",
+            `LOCAL_HOOK="$(git rev-parse --git-dir)/hooks/${hookName}"`,
+            'if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then',
+            '    "$LOCAL_HOOK" "$@" || exit $?',
+            'fi',
+            "",
+        ].join("\n");
+        fs.writeFileSync(hookPath, content);
+        try { fs.chmodSync(hookPath, "755"); } catch { }
+        ok(`Created passthrough hook: ${hookName}`);
+    }
+}
+
 /** Install the global git commit-msg hook. */
 function installGitHook() {
     console.log("\nGit commit-msg hook:");
@@ -108,10 +131,12 @@ function installGitHook() {
         // Use existing hooksPath directory
         fs.mkdirSync(existingPath, { recursive: true });
         appendOrCreateHook(existingPath);
+        ensurePassthroughHooks(existingPath);
     } else {
         const hooksDir = path.join(os.homedir(), ".config", "ai-contribution-tracker", "git-hooks");
         fs.mkdirSync(hooksDir, { recursive: true });
         appendOrCreateHook(hooksDir);
+        ensurePassthroughHooks(hooksDir);
 
         try {
             const gitPath = hooksDir.replace(/\\/g, "/");
