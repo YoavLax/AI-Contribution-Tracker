@@ -19,7 +19,8 @@ const { execSync, execFileSync } = require("child_process");
 
 // ─── Constants ──────────────────────────────────────────────
 const PLUGIN_NAME = "@rachel_rotenberg/ai-contribution-tracker";
-const HOOK_MARKER = "AI_IMPACT_PENDING";
+const HOOK_BEGIN = "# BEGIN ai-contribution-tracker-cli";
+const HOOK_END = "# END ai-contribution-tracker-cli";
 
 // ─── Logging helpers ────────────────────────────────────────
 function ok(msg)   { console.log(`  \u2713 ${msg}`); }
@@ -29,20 +30,22 @@ function fail(msg) { console.error(`  \u2717 ${msg}`); }
 
 // ─── Git hook body (shell script, runs on all platforms via Git Bash) ───
 const HOOK_BODY = [
-    "",
-    "# AI Contribution Tracker \u2014 reads AI_IMPACT_PENDING flag",
+    "# BEGIN ai-contribution-tracker-cli",
     'IMPACT_FLAG=$(git rev-parse --git-path AI_IMPACT_PENDING)',
     'STATE_FILE=$(git rev-parse --git-path ai-tracker-state.json)',
     'if [ -f "$IMPACT_FLAG" ]; then',
     '    MARKER=$(cat "$IMPACT_FLAG")',
     '    if [ -z "$MARKER" ]; then MARKER="Impacted by AI"; fi',
-    '    if ! grep -qF "$MARKER" "$1"; then',
+    '    FIRST_LINE=$(head -n 1 "$IMPACT_FLAG")',
+    '    if ! grep -qF "$FIRST_LINE" "$1"; then',
+    '        if [ -s "$1" ] && [ "$(tail -c 1 "$1" | wc -l)" -eq 0 ]; then printf "\\n" >> "$1"; fi',
     '        echo "" >> "$1"',
     '        echo "$MARKER" >> "$1"',
     '    fi',
     '    rm "$IMPACT_FLAG"',
     'fi',
     'if [ -f "$STATE_FILE" ]; then rm "$STATE_FILE"; fi',
+    "# END ai-contribution-tracker-cli",
 ].join("\n");
 
 // ─── Git hook installation ──────────────────────────────────
@@ -53,7 +56,7 @@ function appendOrCreateHook(hooksDir) {
 
     if (fs.existsSync(hookPath)) {
         const existing = fs.readFileSync(hookPath, "utf8");
-        if (existing.includes(HOOK_MARKER)) {
+        if (existing.includes(HOOK_BEGIN)) {
             skip(`commit-msg hook already has AI tracker snippet: ${hookPath}`);
             return;
         }
@@ -133,7 +136,7 @@ function addPluginToConfig(configDir) {
 
         // Check if already registered (plain string or [name, options] tuple)
         const alreadyRegistered = plugins.some(
-            (p) => (typeof p === "string" ? p : p[0]) === PLUGIN_NAME
+            (p) => p && (typeof p === "string" ? p : Array.isArray(p) ? p[0] : null) === PLUGIN_NAME
         );
 
         if (alreadyRegistered) {
@@ -172,7 +175,7 @@ function showStatus() {
 
     if (hooksPath) {
         const hookFile = path.join(hooksPath, "commit-msg");
-        if (fs.existsSync(hookFile) && fs.readFileSync(hookFile, "utf8").includes(HOOK_MARKER)) {
+        if (fs.existsSync(hookFile) && fs.readFileSync(hookFile, "utf8").includes(HOOK_BEGIN)) {
             ok(`Git hook installed: ${hookFile}`);
         } else {
             warn(`core.hooksPath set to ${hooksPath} but no AI tracker snippet found`);
@@ -188,7 +191,7 @@ function showStatus() {
             const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
             const plugins = Array.isArray(config.plugin) ? config.plugin : [];
             const found = plugins.some(
-                (p) => (typeof p === "string" ? p : p[0]) === PLUGIN_NAME
+                (p) => p && (typeof p === "string" ? p : Array.isArray(p) ? p[0] : null) === PLUGIN_NAME
             );
             if (found) {
                 ok(`OpenCode plugin registered: ${configPath}`);
@@ -228,8 +231,8 @@ function removeGitHook() {
     }
 
     const content = fs.readFileSync(hookFile, "utf8");
-    if (!content.includes(HOOK_MARKER)) {
-        skip("commit-msg hook does not contain AI tracker snippet");
+    if (!content.includes(HOOK_BEGIN)) {
+        skip("commit-msg hook does not contain AI tracker CLI snippet");
         return;
     }
 
@@ -237,24 +240,10 @@ function removeGitHook() {
     const filtered = [];
     let skipping = false;
 
-    for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes("AI Contribution Tracker")) {
-            skipping = true;
-            continue;
-        }
-        if (skipping) {
-            if (lines[i].includes('rm "$STATE_FILE"')) {
-                // consume the closing `fi` on the next non-empty line, then stop skipping
-                for (let j = i + 1; j < lines.length; j++) {
-                    if (lines[j].trim() === "fi") { i = j; break; }
-                    if (lines[j].trim() !== "") { i = j - 1; break; }
-                }
-                skipping = false;
-                continue;
-            }
-            continue;
-        }
-        filtered.push(lines[i]);
+    for (const line of lines) {
+        if (line.includes(HOOK_BEGIN)) { skipping = true; continue; }
+        if (line.includes(HOOK_END))   { skipping = false; continue; }
+        if (!skipping) filtered.push(line);
     }
 
     const remaining = filtered.join("\n").trim();
@@ -298,7 +287,7 @@ function removeOpenCodePlugin() {
 
         const before = config.plugin.length;
         config.plugin = config.plugin.filter(
-            (p) => (typeof p === "string" ? p : p[0]) !== PLUGIN_NAME
+            (p) => !p || (typeof p === "string" ? p : Array.isArray(p) ? p[0] : null) !== PLUGIN_NAME
         );
 
         if (config.plugin.length === before) {
