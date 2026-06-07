@@ -112,40 +112,6 @@ function ensurePassthroughHooks(hooksDir) {
     }
 }
 
-function installPreCommitFramework(hooksDir) {
-    const configFile = path.join(process.cwd(), ".pre-commit-config.yaml");
-    if (!fs.existsSync(configFile)) return;
-
-    let preCommitBin = "";
-    try {
-        preCommitBin = execSync("which pre-commit 2>/dev/null || command -v pre-commit 2>/dev/null", {
-            encoding: "utf8", shell: true, stdio: ["pipe", "pipe", "pipe"],
-        }).trim();
-    } catch { }
-    if (!preCommitBin) return;
-
-    try {
-        execFileSync("git", ["config", "--global", "--unset", "core.hooksPath"], {
-            encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],
-        });
-    } catch { }
-
-    try {
-        execFileSync(preCommitBin, ["install"], {
-            encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], cwd: process.cwd(),
-        });
-        ok("Installed pre-commit framework hooks");
-    } catch (e) {
-        warn(`Could not run pre-commit install: ${e.message}`);
-    }
-
-    try {
-        const gitPath = hooksDir.replace(/\\/g, "/");
-        execFileSync("git", ["config", "--global", "core.hooksPath", gitPath], {
-            encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],
-        });
-    } catch { }
-}
 
 /** Install the global git commit-msg hook. */
 function installGitHook() {
@@ -166,7 +132,6 @@ function installGitHook() {
         fs.mkdirSync(existingPath, { recursive: true });
         appendOrCreateHook(existingPath);
         ensurePassthroughHooks(existingPath);
-        installPreCommitFramework(existingPath);
     } else {
         const hooksDir = path.join(os.homedir(), ".config", "ai-contribution-tracker", "git-hooks");
         fs.mkdirSync(hooksDir, { recursive: true });
@@ -183,8 +148,6 @@ function installGitHook() {
         } catch (e) {
             fail(`Could not set core.hooksPath: ${e.message}`);
         }
-
-        installPreCommitFramework(hooksDir);
     }
 }
 
