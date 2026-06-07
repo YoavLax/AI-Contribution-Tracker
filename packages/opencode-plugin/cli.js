@@ -63,7 +63,15 @@ function appendOrCreateHook(hooksDir) {
         fs.appendFileSync(hookPath, "\n" + HOOK_BODY + "\n");
         ok(`Appended AI tracker snippet to existing hook: ${hookPath}`);
     } else {
-        const content = ("#!/bin/sh\n" + HOOK_BODY + "\n").replace(/\r\n/g, "\n");
+        const delegation = [
+            "#!/bin/sh",
+            'LOCAL_HOOK="$(git rev-parse --git-dir)/hooks/commit-msg"',
+            'if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then',
+            '    "$LOCAL_HOOK" "$@" || exit $?',
+            'fi',
+            "",
+        ].join("\n");
+        const content = (delegation + HOOK_BODY + "\n").replace(/\r\n/g, "\n");
         fs.writeFileSync(hookPath, content);
         ok(`Created commit-msg hook: ${hookPath}`);
     }
