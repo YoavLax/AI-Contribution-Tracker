@@ -2,7 +2,7 @@
 
 # AI Contribution Tracker
 
-**Automatically tag every git commit with AI usage metadata — models, tokens, prompts, and cost signals. Works with VS Code Copilot,  [GitHub Copilot CLI](https://github.com/features/copilot/cli) & OpenCode. All local. Zero config.**
+**Automatically tag every git commit with AI usage metadata — models, tokens, prompts, and cost signals. Works with VS Code Copilot,  [GitHub Copilot CLI](https://github.com/features/copilot/cli), Claude Code & OpenCode. All local. Zero config.**
 
 [![Version](https://img.shields.io/visual-studio-marketplace/v/YoavLax.ai-contribution-tracker?style=flat-square&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=YoavLax.ai-contribution-tracker)
 [![License](https://img.shields.io/github/license/YoavLax/AI-Contribution-Tracker?style=flat-square)](LICENSE)
