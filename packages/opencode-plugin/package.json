@@ -1,11 +1,15 @@
 {
   "name": "@rachel_rotenberg/ai-contribution-tracker",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "OpenCode plugin \u2014 tracks AI coding sessions and tags git commits with Impacted by AI markers",
   "main": "index.ts",
   "types": "index.ts",
+  "bin": {
+    "ai-contribution-tracker": "./cli.js"
+  },
   "files": [
-    "index.ts"
+    "index.ts",
+    "cli.js"
   ],
   "exports": {
     ".": {
