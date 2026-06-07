@@ -1,6 +1,16 @@
 # Change Log
 
 All notable changes to the "AI Contribution Tracker" extension will be documented in this file.
+## [2.4.0] - 2026-06-07
+
+### Added
+- **Claude Code support**: AI sessions from [Claude Code](https://claude.ai/code) are now tracked automatically. The hook handler reads Claude's per-turn JSONL transcripts (`~/.claude/projects/<cwd>/<sessionId>.jsonl`), extracting model names and per-model token totals (input, output, cache creation, cache read). Source normalization maps `startup` and `claude-vscode` → `claude` in commit markers.
+- **Standalone CLI installer** (`npx @rachel_rotenberg/ai-contribution-tracker init`): installs the global git commit-msg hook and registers the OpenCode plugin without requiring VS Code. Supports `init`, `status`, and `remove` commands. Works on macOS, Linux, and Windows.
+- **Dual-reader dispatch**: both the Copilot CLI transcript reader and the new Claude Code reader run at `Stop` and `CommitMsg` time. Their JSONL schemas are disjoint (`type:"assistant.message"` vs `type:"assistant"`) so no double-counting is possible.
+
+### Fixed
+- **gitDir re-resolution**: when a previously resolved git directory is deleted mid-session (e.g. temp repo cleanup), the plugin now re-resolves `gitDir` from the next file path tool call instead of silently dropping events.
+
 ## [2.3.0] - 2026-05-25
 
 ### Added
