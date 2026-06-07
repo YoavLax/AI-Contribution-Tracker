@@ -306,3 +306,4 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
 };
 export default AIContributionTracker;
 // Named exports omitted — OpenCode calls all exported functions as plugins
+
