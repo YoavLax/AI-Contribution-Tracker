@@ -22,7 +22,7 @@ const PLUGIN_NAME = "@rachel_rotenberg/ai-contribution-tracker";
 const HOOK_BEGIN = "# BEGIN ai-contribution-tracker-cli";
 const HOOK_END = "# END ai-contribution-tracker-cli";
 const HOOK_DELEGATION = [
-    'LOCAL_HOOK="$(git rev-parse --git-dir)/hooks/commit-msg"',
+    'LOCAL_HOOK="$(git rev-parse --path-format=absolute --git-common-dir)/hooks/commit-msg"',
     'if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then',
     '    "$LOCAL_HOOK" "$@" || exit $?',
     'fi',
@@ -61,12 +61,13 @@ function appendOrCreateHook(hooksDir) {
     const hookPath = path.join(hooksDir, "commit-msg");
 
     if (fs.existsSync(hookPath)) {
-        let existing = fs.readFileSync(hookPath, "utf8");
+        let existing = fs.readFileSync(hookPath, "utf8").replace(/\r\n/g, "\n");
         if (existing.includes(HOOK_BEGIN)) {
             if (!existing.includes(HOOK_DELEGATION.split("\n")[0])) {
-                const firstLine = existing.split("\n")[0];
-                existing = firstLine + "\n" + HOOK_DELEGATION + "\n" + existing.split("\n").slice(1).join("\n");
-                fs.writeFileSync(hookPath, existing.replace(/\r\n/g, "\n"));
+                const lines = existing.split("\n");
+                const firstLine = lines[0].replace(/\r$/, "");
+                existing = firstLine + "\n" + HOOK_DELEGATION + "\n" + lines.slice(1).map(l => l.replace(/\r$/, "")).join("\n");
+                fs.writeFileSync(hookPath, existing);
                 ok(`Added local hook delegation to: ${hookPath}`);
             } else {
                 skip(`commit-msg hook already up to date: ${hookPath}`);
@@ -100,7 +101,7 @@ function ensurePassthroughHooks(hooksDir) {
         if (fs.existsSync(hookPath)) continue;
         const content = [
             "#!/bin/sh",
-            `LOCAL_HOOK="$(git rev-parse --git-dir)/hooks/${hookName}"`,
+            `LOCAL_HOOK="$(git rev-parse --path-format=absolute --git-common-dir)/hooks/${hookName}"`,
             'if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then',
             '    "$LOCAL_HOOK" "$@" || exit $?',
             'fi',
@@ -286,6 +287,17 @@ function removeGitHook() {
         if (line.includes(HOOK_BEGIN)) { skipping = true; continue; }
         if (line.includes(HOOK_END))   { skipping = false; continue; }
         if (!skipping) filtered.push(line);
+    }
+
+    for (const hookName of PASSTHROUGH_HOOKS) {
+        const p = path.join(hooksPath, hookName);
+        if (fs.existsSync(p)) {
+            const body = fs.readFileSync(p, "utf8");
+                if (body.includes(`git rev-parse --path-format=absolute --git-common-dir`)) {
+                fs.unlinkSync(p);
+                ok(`Removed passthrough hook: ${hookName}`);
+            }
+        }
     }
 
     const remaining = filtered.join("\n").trim();

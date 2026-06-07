@@ -108,7 +108,7 @@ function setupGlobalGitHooks(context: vscode.ExtensionContext): void {
 # This hook runs globally for all repositories
 
 # Delegate to repo-local commit-msg hook first if one exists
-LOCAL_HOOK="$(git rev-parse --git-dir)/hooks/commit-msg"
+LOCAL_HOOK="$(git rev-parse --path-format=absolute --git-common-dir)/hooks/commit-msg"
 if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then
     "$LOCAL_HOOK" "$@" || exit $?
 fi
@@ -197,7 +197,7 @@ fi
         for (const hookName of passthroughHooks) {
             const passthroughFile = path.join(globalHooksDir, hookName);
             if (!fs.existsSync(passthroughFile)) {
-                const content = `#!/bin/sh\nLOCAL_HOOK="$(git rev-parse --git-dir)/hooks/${hookName}"\nif [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then\n    "$LOCAL_HOOK" "$@" || exit $?\nfi\n`;
+                const content = `#!/bin/sh\nLOCAL_HOOK="$(git rev-parse --path-format=absolute --git-common-dir)/hooks/${hookName}"\nif [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then\n    "$LOCAL_HOOK" "$@" || exit $?\nfi\n`;
                 fs.writeFileSync(passthroughFile, content);
                 if (os.platform() !== 'win32') {
                     fs.chmodSync(passthroughFile, '755');
