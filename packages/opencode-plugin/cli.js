@@ -15,7 +15,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { execSync } = require("child_process");
+const { execSync, execFileSync } = require("child_process");
 
 // ─── Constants ──────────────────────────────────────────────
 const PLUGIN_NAME = "@rachel_rotenberg/ai-contribution-tracker";
@@ -36,7 +36,7 @@ const HOOK_BODY = [
     'if [ -f "$IMPACT_FLAG" ]; then',
     '    MARKER=$(cat "$IMPACT_FLAG")',
     '    if [ -z "$MARKER" ]; then MARKER="Impacted by AI"; fi',
-    '    if ! grep -qF "Impacted by AI" "$1"; then',
+    '    if ! grep -qF "$MARKER" "$1"; then',
     '        echo "" >> "$1"',
     '        echo "$MARKER" >> "$1"',
     '    fi',
@@ -95,7 +95,7 @@ function installGitHook() {
 
         try {
             const gitPath = hooksDir.replace(/\\/g, "/");
-            execSync(`git config --global core.hooksPath "${gitPath}"`, {
+            execFileSync("git", ["config", "--global", "core.hooksPath", gitPath], {
                 encoding: "utf8",
                 stdio: ["pipe", "pipe", "pipe"],
             });
@@ -261,6 +261,19 @@ function removeGitHook() {
     if (remaining === "#!/bin/sh" || remaining === "") {
         fs.unlinkSync(hookFile);
         ok(`Removed commit-msg hook: ${hookFile}`);
+
+        const ourDefaultDir = path.join(os.homedir(), ".config", "ai-contribution-tracker", "git-hooks");
+        const normalizedHooksPath = hooksPath.replace(/\\/g, "/");
+        const normalizedOurDir = ourDefaultDir.replace(/\\/g, "/");
+        if (normalizedHooksPath === normalizedOurDir) {
+            try {
+                execFileSync("git", ["config", "--global", "--unset", "core.hooksPath"], {
+                    encoding: "utf8",
+                    stdio: ["pipe", "pipe", "pipe"],
+                });
+                ok("Unset git global core.hooksPath");
+            } catch { }
+        }
     } else {
         fs.writeFileSync(hookFile, remaining + "\n");
         ok(`Removed AI tracker snippet from: ${hookFile}`);
