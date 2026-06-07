@@ -371,3 +371,4 @@ switch (command) {
         printUsage();
         process.exit(command ? 1 : 0);
 }
+
