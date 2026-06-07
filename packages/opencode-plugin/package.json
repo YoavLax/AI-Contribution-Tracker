@@ -1,11 +1,11 @@
 {
   "name": "@rachel_rotenberg/ai-contribution-tracker",
-  "version": "1.0.19",
-  "description": "OpenCode plugin \u2014 tracks AI coding sessions and tags git commits with Impacted by AI markers",
+  "version": "1.0.20",
+  "description": "OpenCode plugin — tracks AI coding sessions and tags git commits with Impacted by AI markers",
   "main": "index.ts",
   "types": "index.ts",
   "bin": {
-    "ai-contribution-tracker": "./cli.js"
+    "ai-contribution-tracker": "cli.js"
   },
   "files": [
     "index.ts",
@@ -28,7 +28,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/YoavLax/AI-Contribution-Tracker"
+    "url": "git+https://github.com/YoavLax/AI-Contribution-Tracker.git"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.0.0"
