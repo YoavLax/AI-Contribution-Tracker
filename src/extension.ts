@@ -193,6 +193,19 @@ fi
         
         logger.appendLine(`[Setup] Created/updated commit-msg hook: ${hookFile}`);
 
+        const passthroughHooks = ['pre-commit', 'pre-push', 'prepare-commit-msg', 'post-commit', 'post-merge', 'pre-rebase'];
+        for (const hookName of passthroughHooks) {
+            const passthroughFile = path.join(globalHooksDir, hookName);
+            if (!fs.existsSync(passthroughFile)) {
+                const content = `#!/bin/sh\nLOCAL_HOOK="$(git rev-parse --git-dir)/hooks/${hookName}"\nif [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then\n    "$LOCAL_HOOK" "$@" || exit $?\nfi\n`;
+                fs.writeFileSync(passthroughFile, content);
+                if (os.platform() !== 'win32') {
+                    fs.chmodSync(passthroughFile, '755');
+                }
+                logger.appendLine(`[Setup] Created passthrough hook: ${hookName}`);
+            }
+        }
+
         // Check current git global config
         let currentHooksPath: string = '';
         try {
