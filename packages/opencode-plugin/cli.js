@@ -21,6 +21,12 @@ const { execSync, execFileSync } = require("child_process");
 const PLUGIN_NAME = "@rachel_rotenberg/ai-contribution-tracker";
 const HOOK_BEGIN = "# BEGIN ai-contribution-tracker-cli";
 const HOOK_END = "# END ai-contribution-tracker-cli";
+const HOOK_DELEGATION = [
+    'LOCAL_HOOK="$(git rev-parse --git-dir)/hooks/commit-msg"',
+    'if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then',
+    '    "$LOCAL_HOOK" "$@" || exit $?',
+    'fi',
+].join("\n");
 
 // ─── Logging helpers ────────────────────────────────────────
 function ok(msg)   { console.log(`  \u2713 ${msg}`); }
@@ -55,23 +61,26 @@ function appendOrCreateHook(hooksDir) {
     const hookPath = path.join(hooksDir, "commit-msg");
 
     if (fs.existsSync(hookPath)) {
-        const existing = fs.readFileSync(hookPath, "utf8");
+        let existing = fs.readFileSync(hookPath, "utf8");
         if (existing.includes(HOOK_BEGIN)) {
-            skip(`commit-msg hook already has AI tracker snippet: ${hookPath}`);
+            if (!existing.includes(HOOK_DELEGATION.split("\n")[0])) {
+                const firstLine = existing.split("\n")[0];
+                existing = firstLine + "\n" + HOOK_DELEGATION + "\n" + existing.split("\n").slice(1).join("\n");
+                fs.writeFileSync(hookPath, existing.replace(/\r\n/g, "\n"));
+                ok(`Added local hook delegation to: ${hookPath}`);
+            } else {
+                skip(`commit-msg hook already up to date: ${hookPath}`);
+            }
+            return;
+        }
+        if (existing.includes("AI_IMPACT_PENDING")) {
+            skip(`commit-msg hook already handles AI tracking (installed by VS Code extension): ${hookPath}`);
             return;
         }
         fs.appendFileSync(hookPath, "\n" + HOOK_BODY + "\n");
         ok(`Appended AI tracker snippet to existing hook: ${hookPath}`);
     } else {
-        const delegation = [
-            "#!/bin/sh",
-            'LOCAL_HOOK="$(git rev-parse --git-dir)/hooks/commit-msg"',
-            'if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then',
-            '    "$LOCAL_HOOK" "$@" || exit $?',
-            'fi',
-            "",
-        ].join("\n");
-        const content = (delegation + HOOK_BODY + "\n").replace(/\r\n/g, "\n");
+        const content = ("#!/bin/sh\n" + HOOK_DELEGATION + "\n\n" + HOOK_BODY + "\n").replace(/\r\n/g, "\n");
         fs.writeFileSync(hookPath, content);
         ok(`Created commit-msg hook: ${hookPath}`);
     }
