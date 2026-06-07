@@ -217,7 +217,7 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                 if (sess.isSubagent) return;
                 
                 // Resolve gitDir from file path — this is the ONLY place we resolve
-                if (!sess.gitDir) {
+                if (!sess.gitDir || !fs.existsSync(sess.gitDir)) {
                     const args = input.args as Record<string, unknown> ?? {};
                     const fp = typeof args.filePath === "string" ? args.filePath : typeof args.path === "string" ? args.path : undefined;
                     if (fp) {

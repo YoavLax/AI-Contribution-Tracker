@@ -368,6 +368,47 @@ suite('OpenCode Plugin — lazy git dir resolution', function () {
         assert.strictEqual(state.tokensByModel['claude-sonnet-4-6'].inputTokens, 1234);
         assert.strictEqual(state.tokensByModel['claude-sonnet-4-6'].outputTokens, 56);
     });
+
+    test('re-resolves gitDir when previously resolved gitDir no longer exists', async () => {
+        // Simulate scenario where a session had a gitDir that was then deleted
+        // (e.g. temp repo cleaned up mid-session) — the fix in index.ts adds
+        // !fs.existsSync(sess.gitDir) to force re-resolution from the next file path.
+
+        // Create a second repo so the plugin can re-resolve to it
+        const secondRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-plugin-rersolve-'));
+        runGit(['init'], secondRepo);
+        runGit(['config', 'user.email', '"test@example.com"'], secondRepo);
+        runGit(['config', 'user.name', '"Test User"'], secondRepo);
+        const secondGitDir = path.join(secondRepo, '.git');
+
+        try {
+            await hooks.event({ event: makeSessionCreatedEvent('ses_rr_01', 'build') } as any);
+            // Resolve to the original repoRoot first
+            await triggerGitDirResolution(hooks, 'ses_rr_01', repoRoot);
+
+            // Destroy the original repo to simulate deletion
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+
+            // Now re-trigger gitDir resolution with a file from the second repo
+            const testFile = path.join(secondRepo, 'rr.ts');
+            fs.writeFileSync(testFile, 'export {};\n');
+            await hooks['tool.execute.after']({
+                sessionID: 'ses_rr_01',
+                tool: 'read',
+                callID: 'call_rr_01',
+                args: { filePath: testFile },
+            } as any, null);
+
+            await hooks['chat.message'](makeChatMessageInput('ses_rr_01', 'build', 'gpt-4o'), null);
+
+            // State should now be written to the second repo
+            const state = loadState(secondGitDir);
+            assert.strictEqual(state.promptCount, 1,
+                'After re-resolution to secondRepo, prompt should be counted there');
+        } finally {
+            try { fs.rmSync(secondRepo, { recursive: true, force: true }); } catch { /* ignore */ }
+        }
+    });
 });
 
 // ─── Suite: token tracking ────────────────────────────────────────────────────
