@@ -308,7 +308,10 @@ function removeGitHook() {
         }
     }
 
-    const remaining = filtered.join("\n").trim();
+    const remaining = filtered.join("\n")
+        .replace(HOOK_DELEGATION + "\n", "")
+        .replace(HOOK_DELEGATION, "")
+        .trim();
     if (remaining === "#!/bin/sh" || remaining === "") {
         fs.unlinkSync(hookFile);
         ok(`Removed commit-msg hook: ${hookFile}`);

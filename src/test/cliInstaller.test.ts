@@ -384,3 +384,176 @@ suite('CLI Installer — command routing', function () {
         assert.ok(!fs.existsSync(hookFile), '"uninstall" alias should remove hook');
     });
 });
+
+// ─── Suite: delegation block ──────────────────────────────────────────────────
+
+const PASSTHROUGH_HOOKS = [
+    'pre-commit', 'pre-push', 'prepare-commit-msg',
+    'post-commit', 'post-merge', 'pre-rebase',
+];
+const PASSTHROUGH_SENTINEL = '# ai-contribution-tracker-cli passthrough';
+const GIT_COMMON_LINE = '_GIT_COMMON="$(git rev-parse --git-common-dir)"';
+const LOCAL_HOOK_COMMIT_MSG = 'LOCAL_HOOK="$_GIT_COMMON/hooks/commit-msg"';
+
+suite('CLI Installer — delegation block', function () {
+    this.timeout(15000);
+
+    let homeDir: string;
+    let gitConfig: string;
+    let cleanup: () => void;
+
+    setup(() => {
+        ({ homeDir, gitConfig, cleanup } = makeTempHome());
+    });
+    teardown(() => cleanup());
+
+    test('init creates delegation block in new commit-msg hook', () => {
+        const env = cliEnv(homeDir, gitConfig);
+        runCli(['init'], env);
+
+        const { hookFile } = defaultPaths(homeDir);
+        const content = fs.readFileSync(hookFile, 'utf8');
+
+        assert.ok(content.includes(GIT_COMMON_LINE), 'Hook should contain _GIT_COMMON resolution');
+        assert.ok(content.includes(LOCAL_HOOK_COMMIT_MSG), 'Hook should reference LOCAL_HOOK for commit-msg');
+        // Delegation block must appear BEFORE the tracker HOOK_BEGIN marker
+        const delegationIndex = content.indexOf(GIT_COMMON_LINE);
+        const hookBeginIndex = content.indexOf(HOOK_BEGIN);
+        assert.ok(delegationIndex < hookBeginIndex, 'Delegation block should appear before HOOK_BEGIN');
+    });
+
+    test('init adds delegation to existing hook that has tracker snippet but no delegation', () => {
+        const { hooksDir, hookFile } = defaultPaths(homeDir);
+        fs.mkdirSync(hooksDir, { recursive: true });
+        // Write a hook that has HOOK_BEGIN but no delegation (simulates pre-2.5.0 install)
+        const oldHook = [
+            '#!/bin/sh',
+            '# BEGIN ai-contribution-tracker-cli',
+            'IMPACT_FLAG=$(git rev-parse --git-path AI_IMPACT_PENDING)',
+            '# END ai-contribution-tracker-cli',
+            '',
+        ].join('\n');
+        fs.writeFileSync(hookFile, oldHook);
+        // Point git to our custom hooksDir
+        fs.writeFileSync(gitConfig, `[core]\n\thooksPath = ${hooksDir.replace(/\\/g, '/')}\n`);
+
+        const env = cliEnv(homeDir, gitConfig);
+        const { stdout } = runCli(['init'], env);
+
+        assert.ok(stdout.includes('delegation'), 'Should report that delegation was added');
+        const content = fs.readFileSync(hookFile, 'utf8');
+        assert.ok(content.includes(GIT_COMMON_LINE), 'Delegation should now be present');
+    });
+});
+
+// ─── Suite: passthrough hooks ─────────────────────────────────────────────────
+
+suite('CLI Installer — passthrough hooks', function () {
+    this.timeout(20000);
+
+    let homeDir: string;
+    let gitConfig: string;
+    let cleanup: () => void;
+
+    setup(() => {
+        ({ homeDir, gitConfig, cleanup } = makeTempHome());
+    });
+    teardown(() => cleanup());
+
+    test('init creates passthrough hooks for all common hook types', () => {
+        const env = cliEnv(homeDir, gitConfig);
+        runCli(['init'], env);
+
+        const { hooksDir } = defaultPaths(homeDir);
+        for (const hookName of PASSTHROUGH_HOOKS) {
+            const hookPath = path.join(hooksDir, hookName);
+            assert.ok(fs.existsSync(hookPath), `Passthrough hook '${hookName}' should be created`);
+        }
+    });
+
+    test('init passthrough hooks start with shebang and contain sentinel', () => {
+        const env = cliEnv(homeDir, gitConfig);
+        runCli(['init'], env);
+
+        const { hooksDir } = defaultPaths(homeDir);
+        for (const hookName of PASSTHROUGH_HOOKS) {
+            const hookPath = path.join(hooksDir, hookName);
+            const content = fs.readFileSync(hookPath, 'utf8');
+            assert.ok(content.startsWith('#!/bin/sh'), `${hookName} should start with shebang`);
+            assert.ok(content.includes(PASSTHROUGH_SENTINEL), `${hookName} should contain passthrough sentinel`);
+        }
+    });
+
+    test('init passthrough hooks delegate to repo-local hook', () => {
+        const env = cliEnv(homeDir, gitConfig);
+        runCli(['init'], env);
+
+        const { hooksDir } = defaultPaths(homeDir);
+        for (const hookName of PASSTHROUGH_HOOKS) {
+            const hookPath = path.join(hooksDir, hookName);
+            const content = fs.readFileSync(hookPath, 'utf8');
+            assert.ok(content.includes(GIT_COMMON_LINE), `${hookName} should resolve _GIT_COMMON`);
+            assert.ok(
+                content.includes(`LOCAL_HOOK="$_GIT_COMMON/hooks/${hookName}"`),
+                `${hookName} should reference correct LOCAL_HOOK`
+            );
+        }
+    });
+
+    test('init is idempotent — skips passthrough hooks that already exist', () => {
+        const env = cliEnv(homeDir, gitConfig);
+        runCli(['init'], env);
+
+        // Record mtimes after first init
+        const { hooksDir } = defaultPaths(homeDir);
+        const mtimes1 = new Map(PASSTHROUGH_HOOKS.map(h => [h, fs.statSync(path.join(hooksDir, h)).mtimeMs]));
+
+        // Sleep briefly so a re-write would update mtime
+        const start = Date.now(); while (Date.now() - start < 50) { /* spin */ }
+
+        const { stdout } = runCli(['init'], env);
+
+        // Files should not be re-written
+        const mtimes2 = new Map(PASSTHROUGH_HOOKS.map(h => [h, fs.statSync(path.join(hooksDir, h)).mtimeMs]));
+        for (const hookName of PASSTHROUGH_HOOKS) {
+            assert.strictEqual(mtimes1.get(hookName), mtimes2.get(hookName), `${hookName} should not be re-written on second init`);
+        }
+        assert.ok(stdout, 'Second init should produce output'); // sanity
+    });
+
+    test('remove deletes passthrough hooks that contain sentinel', () => {
+        const env = cliEnv(homeDir, gitConfig);
+        runCli(['init'], env);
+
+        const { hooksDir } = defaultPaths(homeDir);
+        // Verify all passthrough hooks exist before remove
+        for (const hookName of PASSTHROUGH_HOOKS) {
+            assert.ok(fs.existsSync(path.join(hooksDir, hookName)), `${hookName} should exist before remove`);
+        }
+
+        runCli(['remove'], env);
+
+        for (const hookName of PASSTHROUGH_HOOKS) {
+            assert.ok(!fs.existsSync(path.join(hooksDir, hookName)), `Passthrough hook '${hookName}' should be deleted by remove`);
+        }
+    });
+
+    test('remove preserves passthrough hook files that do NOT contain sentinel', () => {
+        const env = cliEnv(homeDir, gitConfig);
+        runCli(['init'], env);
+
+        const { hooksDir } = defaultPaths(homeDir);
+        // Overwrite pre-commit with a user-owned hook (no sentinel)
+        const userHook = path.join(hooksDir, 'pre-commit');
+        fs.writeFileSync(userHook, '#!/bin/sh\necho "user pre-commit"\n');
+
+        runCli(['remove'], env);
+
+        // User-owned pre-commit should still exist
+        assert.ok(fs.existsSync(userHook), 'User-owned pre-commit (no sentinel) should NOT be deleted');
+        // All others (with sentinel) should be gone
+        for (const hookName of PASSTHROUGH_HOOKS.filter(h => h !== 'pre-commit')) {
+            assert.ok(!fs.existsSync(path.join(hooksDir, hookName)), `Sentinel passthrough hook '${hookName}' should be deleted`);
+        }
+    });
+});
