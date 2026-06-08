@@ -21,8 +21,14 @@ const { execSync, execFileSync } = require("child_process");
 const PLUGIN_NAME = "@rachel_rotenberg/ai-contribution-tracker";
 const HOOK_BEGIN = "# BEGIN ai-contribution-tracker-cli";
 const HOOK_END = "# END ai-contribution-tracker-cli";
+const PASSTHROUGH_SENTINEL = "# ai-contribution-tracker-cli passthrough";
+const GIT_COMMON_ABS = [
+    '_GIT_COMMON="$(git rev-parse --git-common-dir)"',
+    'case "$_GIT_COMMON" in /*) ;; *) _GIT_COMMON="$(pwd)/$_GIT_COMMON" ;; esac',
+].join("\n");
 const HOOK_DELEGATION = [
-    'LOCAL_HOOK="$(git rev-parse --path-format=absolute --git-common-dir)/hooks/commit-msg"',
+    GIT_COMMON_ABS,
+    'LOCAL_HOOK="$_GIT_COMMON/hooks/commit-msg"',
     'if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then',
     '    "$LOCAL_HOOK" "$@" || exit $?',
     'fi',
@@ -101,7 +107,9 @@ function ensurePassthroughHooks(hooksDir) {
         if (fs.existsSync(hookPath)) continue;
         const content = [
             "#!/bin/sh",
-            `LOCAL_HOOK="$(git rev-parse --path-format=absolute --git-common-dir)/hooks/${hookName}"`,
+            PASSTHROUGH_SENTINEL,
+            GIT_COMMON_ABS,
+            `LOCAL_HOOK="$_GIT_COMMON/hooks/${hookName}"`,
             'if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then',
             '    "$LOCAL_HOOK" "$@" || exit $?',
             'fi',
@@ -293,7 +301,7 @@ function removeGitHook() {
         const p = path.join(hooksPath, hookName);
         if (fs.existsSync(p)) {
             const body = fs.readFileSync(p, "utf8");
-                if (body.includes(`git rev-parse --path-format=absolute --git-common-dir`)) {
+                if (body.includes(PASSTHROUGH_SENTINEL)) {
                 fs.unlinkSync(p);
                 ok(`Removed passthrough hook: ${hookName}`);
             }

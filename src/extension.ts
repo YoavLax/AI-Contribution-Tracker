@@ -108,7 +108,9 @@ function setupGlobalGitHooks(context: vscode.ExtensionContext): void {
 # This hook runs globally for all repositories
 
 # Delegate to repo-local commit-msg hook first if one exists
-LOCAL_HOOK="$(git rev-parse --path-format=absolute --git-common-dir)/hooks/commit-msg"
+_GIT_COMMON="$(git rev-parse --git-common-dir)"
+case "$_GIT_COMMON" in /*) ;; *) _GIT_COMMON="$(pwd)/$_GIT_COMMON" ;; esac
+LOCAL_HOOK="$_GIT_COMMON/hooks/commit-msg"
 if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then
     "$LOCAL_HOOK" "$@" || exit $?
 fi
@@ -197,7 +199,8 @@ fi
         for (const hookName of passthroughHooks) {
             const passthroughFile = path.join(globalHooksDir, hookName);
             if (!fs.existsSync(passthroughFile)) {
-                const content = `#!/bin/sh\nLOCAL_HOOK="$(git rev-parse --path-format=absolute --git-common-dir)/hooks/${hookName}"\nif [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then\n    "$LOCAL_HOOK" "$@" || exit $?\nfi\n`;
+                const passthroughSentinel = '# ai-contribution-tracker-cli passthrough';
+                const content = `#!/bin/sh\n${passthroughSentinel}\n_GIT_COMMON="$(git rev-parse --git-common-dir)"\ncase "$_GIT_COMMON" in /*) ;; *) _GIT_COMMON="$(pwd)/$_GIT_COMMON" ;; esac\nLOCAL_HOOK="$_GIT_COMMON/hooks/${hookName}"\nif [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then\n    "$LOCAL_HOOK" "$@" || exit $?\nfi\n`;
                 fs.writeFileSync(passthroughFile, content);
                 if (os.platform() !== 'win32') {
                     fs.chmodSync(passthroughFile, '755');
