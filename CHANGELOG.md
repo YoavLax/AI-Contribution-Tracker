@@ -1,6 +1,16 @@
 # Change Log
 
 All notable changes to the "AI Contribution Tracker" extension will be documented in this file.
+## [2.5.0] - 2026-06-08
+
+### Added
+- **Local hook delegation**: the global `commit-msg` hook now delegates to the repo-local `commit-msg` hook (if present and executable) before running AI tracking logic, so project-level git hooks are no longer bypassed.
+- **Passthrough hooks**: `init` now creates passthrough hooks (`pre-commit`, `pre-push`, `prepare-commit-msg`, `post-commit`, `post-merge`, `pre-rebase`) in the global hooks directory, each delegating to the corresponding repo-local hook. Existing user hooks are never overwritten.
+- **Portable `--git-common-dir` resolution**: the delegation snippet resolves the git common dir to an absolute path, ensuring correctness in worktrees and repos with relative paths.
+
+### Fixed
+- **`remove` now cleans up passthrough hooks**: `npx ... remove` / `uninstall` deletes all passthrough hooks containing the CLI sentinel, while preserving user-owned hooks at the same paths.
+
 ## [2.4.0] - 2026-06-07
 
 ### Added
