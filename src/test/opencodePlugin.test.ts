@@ -600,3 +600,192 @@ suite('OpenCode Plugin — Inline flag merge', function () {
         );
     });
 });
+
+// ─── Suite: consumed marker (commit boundary detection) ──────────────────────
+
+suite('OpenCode Plugin — consumed marker (commit boundary)', function () {
+    this.timeout(10000);
+
+    let repoRoot: string;
+    let gitDir: string;
+    let hooks: any;
+
+    setup(async () => {
+        repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-plugin-test-'));
+        runGit(['init'], repoRoot);
+        runGit(['config', 'user.email', '"test@example.com"'], repoRoot);
+        runGit(['config', 'user.name', '"Test User"'], repoRoot);
+        gitDir = path.join(repoRoot, '.git');
+        hooks = await AIContributionTracker(makeMockPluginInput(repoRoot) as any);
+    });
+
+    teardown(() => {
+        try { fs.rmSync(repoRoot, { recursive: true, force: true }); } catch {}
+    });
+
+    test('session.idle does NOT recreate flag after consumed marker is present', async () => {
+        await hooks.event({ event: makeSessionCreatedEvent('ses_consumed_01', 'build') } as any);
+        await triggerGitDirResolution(hooks, 'ses_consumed_01', repoRoot);
+        await hooks['chat.message'](makeChatMessageInput('ses_consumed_01'), null);
+
+        const flagPath = getFlagPath(gitDir);
+        assert.ok(fs.existsSync(flagPath), 'Flag should exist before commit');
+
+        const consumedPath = path.join(gitDir, 'AI_IMPACT_CONSUMED');
+        fs.writeFileSync(consumedPath, '');
+        fs.unlinkSync(flagPath);
+        try { fs.unlinkSync(getStatePath(gitDir)); } catch {}
+
+        await hooks.event({ event: makeSessionIdleEvent('ses_consumed_01') } as any);
+
+        assert.ok(!fs.existsSync(flagPath), 'Flag must NOT be recreated after consumed marker');
+        assert.ok(!fs.existsSync(consumedPath), 'Consumed marker should be deleted by plugin');
+    });
+
+    test('message.updated does NOT recreate flag after consumed marker', async () => {
+        await hooks.event({ event: makeSessionCreatedEvent('ses_consumed_02', 'build') } as any);
+        await triggerGitDirResolution(hooks, 'ses_consumed_02', repoRoot);
+
+        await hooks.event({
+            event: makeMessageUpdatedEvent('ses_consumed_02', {
+                messageId: 'msg_consumed_02',
+                inputTokens: 500000,
+                outputTokens: 10000,
+            }),
+        } as any);
+
+        const flagPath = getFlagPath(gitDir);
+        assert.ok(fs.existsSync(flagPath), 'Flag should exist before commit');
+
+        fs.writeFileSync(path.join(gitDir, 'AI_IMPACT_CONSUMED'), '');
+        try { fs.unlinkSync(flagPath); } catch {}
+        try { fs.unlinkSync(getStatePath(gitDir)); } catch {}
+
+        await hooks.event({
+            event: makeMessageUpdatedEvent('ses_consumed_02', {
+                messageId: 'msg_consumed_02',
+                inputTokens: 510000,
+                outputTokens: 10500,
+            }),
+        } as any);
+
+        assert.ok(!fs.existsSync(flagPath),
+            'Flag must NOT be recreated from token streaming after consumed marker');
+    });
+
+    test('tool.execute.after (task) does NOT recreate flag after consumed marker', async () => {
+        await hooks.event({ event: makeSessionCreatedEvent('ses_consumed_03', 'build') } as any);
+        await triggerGitDirResolution(hooks, 'ses_consumed_03', repoRoot);
+        await hooks['chat.message'](makeChatMessageInput('ses_consumed_03'), null);
+
+        fs.writeFileSync(path.join(gitDir, 'AI_IMPACT_CONSUMED'), '');
+        try { fs.unlinkSync(getFlagPath(gitDir)); } catch {}
+        try { fs.unlinkSync(getStatePath(gitDir)); } catch {}
+
+        await hooks['tool.execute.after']({
+            sessionID: 'ses_consumed_03',
+            tool: 'task',
+            callID: 'call_consumed_03',
+            args: { subagent_type: 'explore' },
+        } as any, null);
+
+        assert.ok(!fs.existsSync(getFlagPath(gitDir)),
+            'Flag must NOT be recreated from task event after consumed marker');
+    });
+
+    test('chat.message un-consumes session and starts fresh state', async () => {
+        await hooks.event({ event: makeSessionCreatedEvent('ses_consumed_04', 'build') } as any);
+        await triggerGitDirResolution(hooks, 'ses_consumed_04', repoRoot);
+
+        await hooks['chat.message'](makeChatMessageInput('ses_consumed_04', 'build', 'claude-sonnet-4-6'), null);
+
+        fs.writeFileSync(path.join(gitDir, 'AI_IMPACT_CONSUMED'), '');
+        try { fs.unlinkSync(getFlagPath(gitDir)); } catch {}
+        try { fs.unlinkSync(getStatePath(gitDir)); } catch {}
+
+        await hooks['chat.message'](makeChatMessageInput('ses_consumed_04', 'build', 'gpt-4o'), null);
+
+        const flagPath = getFlagPath(gitDir);
+        assert.ok(fs.existsSync(flagPath), 'Flag should be written for new prompt after consumed');
+
+        const state = loadState(gitDir);
+        assert.strictEqual(state.promptCount, 1,
+            'Fresh state should have promptCount=1, not carried over from previous cycle');
+        assert.ok(state.models.includes('gpt-4o'), 'New model should be recorded');
+        assert.ok(!state.models.includes('claude-sonnet-4-6'),
+            'Old model from consumed cycle should NOT be in fresh state');
+    });
+
+    test('post-commit prompts survive consumed marker at gitDir resolution', async () => {
+        // Scenario: plugin restarts, consumed marker exists, user sends prompts
+        // before gitDir is resolved. Those prompts are post-commit and must survive.
+        await hooks.event({ event: makeSessionCreatedEvent('ses_consumed_05', 'build') } as any);
+
+        await hooks['chat.message'](makeChatMessageInput('ses_consumed_05', 'build', 'claude-sonnet-4-6'), null);
+        await hooks['chat.message'](makeChatMessageInput('ses_consumed_05', 'build', 'claude-sonnet-4-6'), null);
+
+        fs.writeFileSync(path.join(gitDir, 'AI_IMPACT_CONSUMED'), '');
+
+        await triggerGitDirResolution(hooks, 'ses_consumed_05', repoRoot);
+
+        const flagPath = getFlagPath(gitDir);
+        assert.ok(fs.existsSync(flagPath),
+            'Post-commit prompts should be flushed (they arrived after the commit)');
+        const state = loadState(gitDir);
+        assert.strictEqual(state.promptCount, 2,
+            'Both post-commit prompts should be counted');
+    });
+
+    test('marker format unchanged — regression test', async () => {
+        await hooks.event({ event: makeSessionCreatedEvent('ses_fmt_01', 'build') } as any);
+        await triggerGitDirResolution(hooks, 'ses_fmt_01', repoRoot);
+
+        await hooks['chat.message'](makeChatMessageInput('ses_fmt_01', 'build', 'claude-sonnet-4-6'), null);
+        await hooks.event({
+            event: makeMessageUpdatedEvent('ses_fmt_01', {
+                messageId: 'msg_fmt_01',
+                inputTokens: 50000,
+                outputTokens: 633,
+                cachedTokens: 45000,
+            }),
+        } as any);
+
+        const flagPath = getFlagPath(gitDir);
+        assert.ok(fs.existsSync(flagPath), 'Flag should exist');
+        const content = fs.readFileSync(flagPath, 'utf8');
+
+        assert.ok(content.startsWith('Impacted by AI ('), `Should start with 'Impacted by AI (', got: ${content}`);
+        assert.ok(content.includes('Agent mode: opencode/build'), 'Should include agent mode');
+        assert.ok(content.includes('Model: claude-sonnet-4-6'), 'Should include model');
+        assert.ok(content.includes('Prompts: 1'), 'Should include prompt count');
+        assert.ok(content.includes('Tokens:'), 'Should include tokens section');
+        assert.ok(content.includes('95k in/633 out'), 'Should format tokens as Nk in/N out');
+        assert.ok(content.includes('45k cached'), 'Should include cached tokens');
+    });
+
+    test('multiple commits: each cycle only tracks its own AI activity', async () => {
+        await hooks.event({ event: makeSessionCreatedEvent('ses_multi_01', 'build') } as any);
+        await triggerGitDirResolution(hooks, 'ses_multi_01', repoRoot);
+
+        await hooks['chat.message'](makeChatMessageInput('ses_multi_01', 'build', 'claude-sonnet-4-6'), null);
+        await hooks['chat.message'](makeChatMessageInput('ses_multi_01', 'build', 'claude-sonnet-4-6'), null);
+        await hooks['chat.message'](makeChatMessageInput('ses_multi_01', 'build', 'claude-sonnet-4-6'), null);
+
+        let state = loadState(gitDir);
+        assert.strictEqual(state.promptCount, 3, 'Cycle 1 should have 3 prompts');
+
+        fs.writeFileSync(path.join(gitDir, 'AI_IMPACT_CONSUMED'), '');
+        try { fs.unlinkSync(getFlagPath(gitDir)); } catch {}
+        try { fs.unlinkSync(getStatePath(gitDir)); } catch {}
+
+        await hooks['chat.message'](makeChatMessageInput('ses_multi_01', 'build', 'gpt-4o'), null);
+
+        state = loadState(gitDir);
+        assert.strictEqual(state.promptCount, 1,
+            'Cycle 2 should have only 1 prompt, not 4 (carried from cycle 1)');
+        assert.ok(!state.models.includes('claude-sonnet-4-6'),
+            'Cycle 2 should not carry claude model from cycle 1');
+        assert.ok(state.models.includes('gpt-4o'),
+            'Cycle 2 should have gpt-4o model');
+    });
+});
