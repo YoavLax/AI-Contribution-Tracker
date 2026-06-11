@@ -318,9 +318,9 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
         "tool.execute.after": async (input, _output) => {
             try {
                 const sess = getOrCreateSession(input.sessionID);
-                if (sess.isSubagent) return;
-                
-                // Resolve gitDir from file path — this is the ONLY place we resolve
+
+                // Resolve gitDir for ALL sessions (main + subagents) so
+                // AI_IMPACT_PENDING flag exists when any agent commits
                 if (!sess.gitDir || !fs.existsSync(sess.gitDir)) {
                     const args = input.args as Record<string, unknown> ?? {};
                     const fp = typeof args.filePath === "string" ? args.filePath : typeof args.path === "string" ? args.path : undefined;
@@ -328,12 +328,25 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                         const abs = path.isAbsolute(fp) ? fp : path.resolve(cwd, fp);
                         sess.gitDir = findGitDir(path.dirname(abs));
                         if (sess.gitDir) {
-                            checkAndResetConsumed(sess);
-                            flushPending(sess, input.sessionID);
+                            if (!sess.isSubagent) {
+                                checkAndResetConsumed(sess);
+                                flushPending(sess, input.sessionID);
+                            } else {
+                                // Subagent: ensure flag exists for commit-msg hook
+                                const state = loadState(sess.gitDir);
+                                const hasActivity = state.promptCount > 0 || state.mainAgentTypes.length > 0
+                                    || state.subagentTypes.length > 0 || state.subagentCount > 0
+                                    || Object.keys(state.tokensByModel).length > 0;
+                                if (hasActivity) { writeFlag(sess.gitDir, state); }
+                                else if (!fs.existsSync(getFlagPath(sess.gitDir))) {
+                                    fs.writeFileSync(getFlagPath(sess.gitDir), `Impacted by AI\n${buildCoAuthoredBy(loadState(sess.gitDir))}`);
+                                }
+                            }
                         }
                     }
                 }
                 if (!sess.gitDir) return;
+                if (sess.isSubagent) return; // subagents don't track task spawns
                 checkAndResetConsumed(sess);
                 if (sess.consumed) return;
 
