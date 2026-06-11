@@ -142,9 +142,9 @@ const commitMsgBody = [
 const postCommitBody = [
     "",
     "# AI Contribution Tracker — signal plugin that a commit consumed AI state",
-    'touch "$(git rev-parse --git-path AI_IMPACT_CONSUMED 2>/dev/null)" 2>/dev/null || exit 0',
-    'rm -f "$(git rev-parse --git-path AI_IMPACT_PENDING)"',
-    'rm -f "$(git rev-parse --git-path ai-tracker-state.json)"',
+    'touch "$(git rev-parse --git-path AI_IMPACT_CONSUMED 2>/dev/null)" 2>/dev/null || true',
+    'rm -f "$(git rev-parse --git-path AI_IMPACT_PENDING 2>/dev/null)" 2>/dev/null',
+    'rm -f "$(git rev-parse --git-path ai-tracker-state.json 2>/dev/null)" 2>/dev/null',
 ].join("\n");
 
 function appendOrCreateHook(hooksDir: string, hookName: string, hookBody: string) {
