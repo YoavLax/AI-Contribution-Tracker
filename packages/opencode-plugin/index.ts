@@ -296,7 +296,14 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                 const sess = getOrCreateSession(input.sessionID, input.agent);
                 if (sess.isSubagent) return;
                 checkAndResetConsumed(sess);
-                sess.consumed = false;
+                if (sess.consumed) {
+                    // Consumed: buffer prompt but don't write to disk.
+                    // Only un-consume when AI touches files (tool.execute.after).
+                    sess.pendingPrompts += 1;
+                    if (input.agent) sess.agentName = input.agent;
+                    if (input.model?.modelID && !sess.pendingModels.includes(input.model.modelID)) sess.pendingModels.push(input.model.modelID);
+                    return;
+                }
                 if (sess.gitDir) {
                     // gitDir known — write directly
                     const state = loadState(sess.gitDir);
@@ -328,6 +335,8 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                         sess.gitDir = findGitDir(path.dirname(abs));
                         if (sess.gitDir) {
                             if (!sess.isSubagent) {
+                                // File tool touched this repo — un-consume and flush
+                                sess.consumed = false;
                                 checkAndResetConsumed(sess);
                                 flushPending(sess, input.sessionID);
                             } else {
@@ -346,6 +355,10 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                 }
                 if (!sess.gitDir) return;
                 if (sess.isSubagent) return; // subagents don't track task spawns
+                // File tool with known gitDir — un-consume if needed
+                const toolArgs = input.args as Record<string, unknown> ?? {};
+                const hasFilePath = typeof toolArgs.filePath === "string" || typeof toolArgs.path === "string";
+                if (hasFilePath) sess.consumed = false;
                 checkAndResetConsumed(sess);
                 if (sess.consumed) return;
 
