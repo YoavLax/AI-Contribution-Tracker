@@ -639,7 +639,7 @@ suite('OpenCode Plugin — consumed marker (commit boundary)', function () {
         await hooks.event({ event: makeSessionIdleEvent('ses_consumed_01') } as any);
 
         assert.ok(!fs.existsSync(flagPath), 'Flag must NOT be recreated after consumed marker');
-        assert.ok(!fs.existsSync(consumedPath), 'Consumed marker should be deleted by plugin');
+        assert.ok(fs.existsSync(consumedPath), 'Consumed marker stays on disk until file tool un-consumes');
     });
 
     test('message.updated does NOT recreate flag after consumed marker', async () => {
@@ -693,27 +693,35 @@ suite('OpenCode Plugin — consumed marker (commit boundary)', function () {
             'Flag must NOT be recreated from task event after consumed marker');
     });
 
-    test('chat.message un-consumes session and starts fresh state', async () => {
+    test('file tool un-consumes and flushes buffered prompts from chat.message', async () => {
         await hooks.event({ event: makeSessionCreatedEvent('ses_consumed_04', 'build') } as any);
         await triggerGitDirResolution(hooks, 'ses_consumed_04', repoRoot);
-
         await hooks['chat.message'](makeChatMessageInput('ses_consumed_04', 'build', 'claude-sonnet-4-6'), null);
 
+        // Simulate commit: consumed marker + cleanup
         fs.writeFileSync(path.join(gitDir, 'AI_IMPACT_CONSUMED'), '');
         try { fs.unlinkSync(getFlagPath(gitDir)); } catch {}
         try { fs.unlinkSync(getStatePath(gitDir)); } catch {}
 
+        // chat.message while consumed — buffers, does NOT write
         await hooks['chat.message'](makeChatMessageInput('ses_consumed_04', 'build', 'gpt-4o'), null);
+        assert.ok(!fs.existsSync(getFlagPath(gitDir)),
+            'chat.message should NOT write flag while consumed');
+
+        // File tool un-consumes and flushes buffered prompt
+        const testFile = path.join(repoRoot, 'unconsume-test.ts');
+        fs.writeFileSync(testFile, 'export {};\n');
+        await hooks['tool.execute.after']({
+            sessionID: 'ses_consumed_04', tool: 'write', callID: 'call_uc',
+            args: { filePath: testFile },
+        } as any, null);
 
         const flagPath = getFlagPath(gitDir);
-        assert.ok(fs.existsSync(flagPath), 'Flag should be written for new prompt after consumed');
-
+        assert.ok(fs.existsSync(flagPath), 'Flag should exist after file tool un-consumes');
         const state = loadState(gitDir);
         assert.strictEqual(state.promptCount, 1,
-            'Fresh state should have promptCount=1, not carried over from previous cycle');
-        assert.ok(state.models.includes('gpt-4o'), 'New model should be recorded');
-        assert.ok(!state.models.includes('claude-sonnet-4-6'),
-            'Old model from consumed cycle should NOT be in fresh state');
+            'Buffered prompt should be flushed — promptCount=1');
+        assert.ok(state.models.includes('gpt-4o'), 'Buffered model should be flushed');
     });
 
     test('post-commit prompts survive consumed marker at gitDir resolution', async () => {

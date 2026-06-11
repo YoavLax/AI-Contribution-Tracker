@@ -26,7 +26,6 @@ interface SessionState {
     pendingPrompts: number;      // counted before gitDir is known
     pendingModels: string[];     // collected before gitDir is known
     lastTokens: Map<string, TokenTotals>;
-    consumed: boolean;
 }
 
 // ─── Git / State helpers ────────────────────────────────────
@@ -46,23 +45,24 @@ function findGitDir(cwd: string): string | null {
 function getStatePath(g: string) { return path.join(g, "ai-tracker-state.json"); }
 function getFlagPath(g: string) { return path.join(g, "AI_IMPACT_PENDING"); }
 function getConsumedPath(g: string) { return path.join(g, "AI_IMPACT_CONSUMED"); }
-function checkConsumed(sess: SessionState): boolean {
-    if (!sess.gitDir) return false;
-    if (sess.consumed) return true;
-    if (fs.existsSync(getConsumedPath(sess.gitDir))) {
-        sess.consumed = true;
-        // Clean stale state/flag but keep consumed marker on disk so every
-        // subsequent check keeps finding it until a file tool un-consumes.
-        try { fs.unlinkSync(getStatePath(sess.gitDir)); } catch { /* ok */ }
-        try { fs.unlinkSync(getFlagPath(sess.gitDir)); } catch { /* ok */ }
+// Consumed state is per-repo (gitDir), not per-session — different event types
+// may use different session IDs but write to the same repo.
+const consumedRepos = new Set<string>();
+function isConsumed(gitDir: string | null): boolean {
+    if (!gitDir) return false;
+    if (consumedRepos.has(gitDir)) return true;
+    if (fs.existsSync(getConsumedPath(gitDir))) {
+        consumedRepos.add(gitDir);
+        try { fs.unlinkSync(getStatePath(gitDir)); } catch { /* ok */ }
+        try { fs.unlinkSync(getFlagPath(gitDir)); } catch { /* ok */ }
         return true;
     }
     return false;
 }
-function clearConsumed(sess: SessionState) {
-    if (!sess.gitDir) return;
-    sess.consumed = false;
-    try { fs.unlinkSync(getConsumedPath(sess.gitDir)); } catch { /* ok */ }
+function unconsume(gitDir: string | null) {
+    if (!gitDir) return;
+    consumedRepos.delete(gitDir);
+    try { fs.unlinkSync(getConsumedPath(gitDir)); } catch { /* ok */ }
 }
 function loadState(g: string): TrackerState {
     const p = getStatePath(g);
@@ -197,20 +197,14 @@ function getOrCreateSession(sid: string, agent?: string): SessionState {
     let sess = sessions.get(sid);
     if (sess) return sess;
     // gitDir starts null — resolved ONLY from file paths in tool.execute.after
-    sess = { gitDir: null, isSubagent: false, agentName: agent ?? "session", pendingPrompts: 0, pendingModels: [], lastTokens: new Map(), consumed: false };
+    sess = { gitDir: null, isSubagent: false, agentName: agent ?? "session", pendingPrompts: 0, pendingModels: [], lastTokens: new Map() };
     sessions.set(sid, sess);
     return sess;
 }
 
-/** Called when gitDir is first resolved — flushes pending prompts/models to disk */
+/** Flush buffered prompts/models to disk. Caller must unconsume() first if needed. */
 function flushPending(sess: SessionState, sid: string) {
-    if (!sess.gitDir) return;
-    if (sess.consumed) {
-        if (sess.pendingPrompts === 0 && sess.pendingModels.length === 0) return;
-        // Pending data exists despite consumed — these prompts arrived via chat.message
-        // when gitDir was null (so it couldn't see the consumed marker). They're post-commit.
-        sess.consumed = false;
-    }
+    if (!sess.gitDir || (sess.pendingPrompts === 0 && sess.pendingModels.length === 0)) return;
     const state = loadState(sess.gitDir);
     state.sessionId = sid;
     const src = `opencode/${sess.agentName}`;
@@ -242,8 +236,7 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                         agentName: info?.agent ?? "session",
                         pendingPrompts: 0, pendingModels: [],
                         lastTokens: new Map(),
-                        consumed: false,
-                    });
+                                            });
                     return;
                 }
                 if (event.type === "session.idle" || (event.type === "session.status" && (event as any).properties?.status?.type === "idle")) {
@@ -251,8 +244,7 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                     if (!sid) return;
                     const sess = sessions.get(sid);
                     if (!sess || sess.isSubagent || !sess.gitDir) return;
-                    checkConsumed(sess);
-                    if (sess.consumed) return;
+                    if (isConsumed(sess.gitDir)) return;
                     writeFlag(sess.gitDir, loadState(sess.gitDir));
                     return;
                 }
@@ -263,9 +255,8 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                     const sid = info.sessionID || info.session_id;
                     if (!sid) return;
                     const sess = getOrCreateSession(sid);
-                    if (sess.isSubagent || !sess.gitDir) return; // skip if gitDir not yet resolved
-                    checkConsumed(sess);
-                    if (sess.consumed) return;
+                    if (sess.isSubagent || !sess.gitDir) return;
+                    if (isConsumed(sess.gitDir)) return;
                     if (info.role !== "assistant" || !info.finish || !info.tokens) return;
                     const modelId = info.modelID ?? "unknown";
                     const msgId = info.id || info.messageID;
@@ -298,8 +289,8 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
             try {
                 const sess = getOrCreateSession(input.sessionID, input.agent);
                 if (sess.isSubagent) return;
-                checkConsumed(sess);
-                if (sess.consumed) {
+                isConsumed(sess.gitDir);
+                if (isConsumed(sess.gitDir)) {
                     // Consumed: buffer prompt but don't write to disk.
                     // Only un-consume when AI touches files (tool.execute.after).
                     sess.pendingPrompts += 1;
@@ -338,7 +329,7 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                         sess.gitDir = findGitDir(path.dirname(abs));
                         if (sess.gitDir) {
                             if (!sess.isSubagent) {
-                                clearConsumed(sess);
+                                unconsume(sess.gitDir);
                                 flushPending(sess, input.sessionID);
                             } else {
                                 // Subagent: ensure flag exists for commit-msg hook
@@ -355,12 +346,10 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                     }
                 }
                 if (!sess.gitDir) return;
-                if (sess.isSubagent) return; // subagents don't track task spawns
                 const toolArgs = input.args as Record<string, unknown> ?? {};
                 const hasFilePath = typeof toolArgs.filePath === "string" || typeof toolArgs.path === "string";
-                if (hasFilePath) clearConsumed(sess);
-                checkConsumed(sess);
-                if (sess.consumed) return;
+                if (isConsumed(sess.gitDir) && hasFilePath) { unconsume(sess.gitDir); if (!sess.isSubagent) flushPending(sess, input.sessionID); }
+                if (isConsumed(sess.gitDir) || sess.isSubagent) return;
 
                 if (input.tool === "task") {
                     const args = input.args as Record<string, unknown> ?? {};
