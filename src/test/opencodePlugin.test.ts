@@ -789,3 +789,90 @@ suite('OpenCode Plugin — consumed marker (commit boundary)', function () {
             'Cycle 2 should have gpt-4o model');
     });
 });
+
+// ─── Suite: subagent flag writing ────────────────────────────────────────────
+
+suite('OpenCode Plugin — subagent flag writing', function () {
+    this.timeout(10000);
+
+    let repoRoot: string;
+    let gitDir: string;
+    let hooks: any;
+
+    setup(async () => {
+        repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-plugin-test-'));
+        runGit(['init'], repoRoot);
+        runGit(['config', 'user.email', '"test@example.com"'], repoRoot);
+        runGit(['config', 'user.name', '"Test User"'], repoRoot);
+        gitDir = path.join(repoRoot, '.git');
+        hooks = await AIContributionTracker(makeMockPluginInput(repoRoot) as any);
+    });
+
+    teardown(() => {
+        try { fs.rmSync(repoRoot, { recursive: true, force: true }); } catch {}
+    });
+
+    test('subagent resolves gitDir and writes flag when main session has state', async () => {
+        // Main session writes state
+        await hooks.event({ event: makeSessionCreatedEvent('ses_sa_01', 'build') } as any);
+        await triggerGitDirResolution(hooks, 'ses_sa_01', repoRoot);
+        await hooks['chat.message'](makeChatMessageInput('ses_sa_01', 'build', 'claude-sonnet-4-6'), null);
+
+        // Subagent session created
+        await hooks.event({ event: makeSessionCreatedEvent('ses_sa_01_sub', 'git-master', 'ses_sa_01') } as any);
+
+        // Subagent touches a file — should resolve gitDir and ensure flag exists
+        const testFile = path.join(repoRoot, 'subagent-file.ts');
+        fs.writeFileSync(testFile, 'export {};\n');
+        await hooks['tool.execute.after']({
+            sessionID: 'ses_sa_01_sub',
+            tool: 'write',
+            callID: 'call_sa_01',
+            args: { filePath: testFile },
+        } as any, null);
+
+        const flagPath = getFlagPath(gitDir);
+        assert.ok(fs.existsSync(flagPath),
+            'Flag should exist after subagent resolves gitDir (main session has state)');
+    });
+
+    test('subagent writes minimal flag when no main session state exists', async () => {
+        // Subagent created WITHOUT main session having written state
+        await hooks.event({ event: makeSessionCreatedEvent('ses_sa_02_sub', 'quick', 'ses_sa_02_parent') } as any);
+
+        const testFile = path.join(repoRoot, 'subagent-only.ts');
+        fs.writeFileSync(testFile, 'export {};\n');
+        await hooks['tool.execute.after']({
+            sessionID: 'ses_sa_02_sub',
+            tool: 'write',
+            callID: 'call_sa_02',
+            args: { filePath: testFile },
+        } as any, null);
+
+        const flagPath = getFlagPath(gitDir);
+        assert.ok(fs.existsSync(flagPath),
+            'Flag should exist even without main session state');
+        const content = fs.readFileSync(flagPath, 'utf8');
+        assert.ok(content.includes('Impacted by AI'),
+            'Minimal flag should contain base marker');
+    });
+
+    test('subagent does NOT increment subagentCount (main session only)', async () => {
+        await hooks.event({ event: makeSessionCreatedEvent('ses_sa_03', 'build') } as any);
+        await triggerGitDirResolution(hooks, 'ses_sa_03', repoRoot);
+        await hooks['chat.message'](makeChatMessageInput('ses_sa_03'), null);
+
+        // Subagent session
+        await hooks.event({ event: makeSessionCreatedEvent('ses_sa_03_sub', 'explore', 'ses_sa_03') } as any);
+        await hooks['tool.execute.after']({
+            sessionID: 'ses_sa_03_sub',
+            tool: 'task',
+            callID: 'call_sa_03',
+            args: { subagent_type: 'explore' },
+        } as any, null);
+
+        const state = loadState(gitDir);
+        assert.strictEqual(state.subagentCount, 0,
+            'Subagent session should NOT increment subagentCount (main session only)');
+    });
+});

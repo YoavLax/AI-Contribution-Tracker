@@ -142,10 +142,9 @@ const commitMsgBody = [
 const postCommitBody = [
     "",
     "# AI Contribution Tracker — signal plugin that a commit consumed AI state",
-    'GIT_DIR_PATH=$(git rev-parse --git-dir 2>/dev/null) || exit 0',
-    'touch "$GIT_DIR_PATH/AI_IMPACT_CONSUMED"',
-    'rm -f "$GIT_DIR_PATH/AI_IMPACT_PENDING"',
-    'rm -f "$GIT_DIR_PATH/ai-tracker-state.json"',
+    'touch "$(git rev-parse --git-path AI_IMPACT_CONSUMED 2>/dev/null)" 2>/dev/null || exit 0',
+    'rm -f "$(git rev-parse --git-path AI_IMPACT_PENDING)"',
+    'rm -f "$(git rev-parse --git-path ai-tracker-state.json)"',
 ].join("\n");
 
 function appendOrCreateHook(hooksDir: string, hookName: string, hookBody: string) {
@@ -339,7 +338,7 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                                     || Object.keys(state.tokensByModel).length > 0;
                                 if (hasActivity) { writeFlag(sess.gitDir, state); }
                                 else if (!fs.existsSync(getFlagPath(sess.gitDir))) {
-                                    fs.writeFileSync(getFlagPath(sess.gitDir), `Impacted by AI\n${buildCoAuthoredBy(loadState(sess.gitDir))}`);
+                                    fs.writeFileSync(getFlagPath(sess.gitDir), `Impacted by AI\n${buildCoAuthoredBy(state)}`);
                                 }
                             }
                         }
@@ -367,4 +366,3 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
 };
 export default AIContributionTracker;
 // Named exports omitted — OpenCode calls all exported functions as plugins
-export { getConsumedPath };
