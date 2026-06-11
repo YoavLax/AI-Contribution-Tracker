@@ -251,7 +251,7 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                 // AI_IMPACT_PENDING flag exists when any agent commits
                 if (!sess.gitDir || !fs.existsSync(sess.gitDir)) {
                     const args = input.args as Record<string, unknown> ?? {};
-                    const fp = typeof args.filePath === "string" ? args.filePath : typeof args.path === "string" ? args.path : undefined;
+                    const fp = typeof args.filePath === "string" ? args.filePath : typeof args.path === "string" ? args.path : typeof args.workdir === "string" ? args.workdir : undefined;
                     if (fp) {
                         const abs = path.isAbsolute(fp) ? fp : path.resolve(cwd, fp);
                         sess.gitDir = findGitDir(path.dirname(abs));
@@ -275,7 +275,7 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                 }
                 if (!sess.gitDir) return;
                 const toolArgs = input.args as Record<string, unknown> ?? {};
-                const hasFilePath = typeof toolArgs.filePath === "string" || typeof toolArgs.path === "string";
+                const hasFilePath = typeof toolArgs.filePath === "string" || typeof toolArgs.path === "string" || typeof toolArgs.workdir === "string";
                 if (isConsumed(sess.gitDir) && hasFilePath) { unconsume(sess.gitDir); if (!sess.isSubagent) flushPending(sess, input.sessionID); }
                 if (isConsumed(sess.gitDir) || sess.isSubagent) return;
 
