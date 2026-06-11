@@ -254,7 +254,8 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                     const fp = typeof args.filePath === "string" ? args.filePath : typeof args.path === "string" ? args.path : typeof args.workdir === "string" ? args.workdir : undefined;
                     if (fp) {
                         const abs = path.isAbsolute(fp) ? fp : path.resolve(cwd, fp);
-                        sess.gitDir = findGitDir(path.dirname(abs));
+                        const searchDir = fp === args.workdir ? abs : path.dirname(abs);
+                        sess.gitDir = findGitDir(searchDir);
                         if (sess.gitDir) {
                             if (!sess.isSubagent) {
                                 unconsume(sess.gitDir);
