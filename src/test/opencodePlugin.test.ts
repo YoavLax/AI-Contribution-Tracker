@@ -555,6 +555,117 @@ suite('OpenCode Plugin — token tracking', function () {
         assert.strictEqual(state.tokensByModel['gpt-4o-mini'].inputTokens, 5000);
         assert.strictEqual(state.tokensByModel['gpt-4o-mini'].outputTokens, 50);
     });
+
+    // ── Per-provider token flow tests ────────────────────────────────────
+    // OpenCode's getUsage normalises tokens.input to fresh-only (cache
+    // subtracted) for every provider.  These tests simulate the real data
+    // each provider produces after OpenCode's two-layer normalisation.
+
+    test('Anthropic (Claude): fresh=82, cache_read=2967000 → inputTokens=2967082', async () => {
+        await hooks.event({ event: makeSessionCreatedEvent('ses_prov_01', 'build') } as any);
+        await triggerGitDirResolution(hooks, 'ses_prov_01', repoRoot);
+        await hooks.event({
+            event: makeMessageUpdatedEvent('ses_prov_01', {
+                messageId: 'msg_prov_01',
+                modelId: 'claude-sonnet-4-6',
+                inputTokens: 82,
+                outputTokens: 24000,
+                cachedTokens: 2967000,
+            }),
+        } as any);
+
+        const state = loadState(gitDir);
+        const t = state.tokensByModel['claude-sonnet-4-6'];
+        assert.ok(t, 'Should have claude model entry');
+        assert.strictEqual(t.inputTokens, 2967082, 'total input = fresh (82) + cached (2967000)');
+        assert.strictEqual(t.cachedTokens, 2967000, 'cachedTokens = cache_read');
+        assert.strictEqual(t.outputTokens, 24000);
+    });
+
+    test('OpenAI (GPT): fresh=1000, cache_read=4000 → inputTokens=5000', async () => {
+        await hooks.event({ event: makeSessionCreatedEvent('ses_prov_02', 'build') } as any);
+        await triggerGitDirResolution(hooks, 'ses_prov_02', repoRoot);
+        await hooks.event({
+            event: makeMessageUpdatedEvent('ses_prov_02', {
+                messageId: 'msg_prov_02',
+                modelId: 'gpt-4o',
+                inputTokens: 1000,
+                outputTokens: 500,
+                cachedTokens: 4000,
+            }),
+        } as any);
+
+        const state = loadState(gitDir);
+        const t = state.tokensByModel['gpt-4o'];
+        assert.ok(t, 'Should have gpt-4o model entry');
+        assert.strictEqual(t.inputTokens, 5000, 'total input = fresh (1000) + cached (4000)');
+        assert.strictEqual(t.cachedTokens, 4000, 'cachedTokens = cache_read');
+        assert.strictEqual(t.outputTokens, 500);
+    });
+
+    test('Gemini: fresh=1000, cache_read=2000 → inputTokens=3000', async () => {
+        await hooks.event({ event: makeSessionCreatedEvent('ses_prov_03', 'build') } as any);
+        await triggerGitDirResolution(hooks, 'ses_prov_03', repoRoot);
+        await hooks.event({
+            event: makeMessageUpdatedEvent('ses_prov_03', {
+                messageId: 'msg_prov_03',
+                modelId: 'gemini-2.5-pro',
+                inputTokens: 1000,
+                outputTokens: 300,
+                cachedTokens: 2000,
+            }),
+        } as any);
+
+        const state = loadState(gitDir);
+        const t = state.tokensByModel['gemini-2.5-pro'];
+        assert.ok(t, 'Should have gemini model entry');
+        assert.strictEqual(t.inputTokens, 3000, 'total input = fresh (1000) + cached (2000)');
+        assert.strictEqual(t.cachedTokens, 2000, 'cachedTokens = cache_read');
+        assert.strictEqual(t.outputTokens, 300);
+    });
+
+    test('no-cache model: fresh=500, cache_read=0 → inputTokens=500', async () => {
+        await hooks.event({ event: makeSessionCreatedEvent('ses_prov_04', 'build') } as any);
+        await triggerGitDirResolution(hooks, 'ses_prov_04', repoRoot);
+        await hooks.event({
+            event: makeMessageUpdatedEvent('ses_prov_04', {
+                messageId: 'msg_prov_04',
+                modelId: 'o3-mini',
+                inputTokens: 500,
+                outputTokens: 200,
+            }),
+        } as any);
+
+        const state = loadState(gitDir);
+        const t = state.tokensByModel['o3-mini'];
+        assert.ok(t, 'Should have o3-mini model entry');
+        assert.strictEqual(t.inputTokens, 500, 'total input = fresh only when no cache');
+        assert.strictEqual(t.cachedTokens, 0);
+        assert.strictEqual(t.outputTokens, 200);
+    });
+
+    test('regression: stale tokens.total field does not override fresh+cached', async () => {
+        await hooks.event({ event: makeSessionCreatedEvent('ses_prov_05', 'build') } as any);
+        await triggerGitDirResolution(hooks, 'ses_prov_05', repoRoot);
+
+        const event = makeMessageUpdatedEvent('ses_prov_05', {
+            messageId: 'msg_prov_05',
+            modelId: 'claude-sonnet-4-6',
+            inputTokens: 82,
+            outputTokens: 24000,
+            cachedTokens: 2967000,
+        });
+        // Inject a stale tokens.total (input+output) that some OpenCode versions may send
+        (event.properties.info.tokens as any).total = 2991082;
+
+        await hooks.event({ event } as any);
+
+        const state = loadState(gitDir);
+        const t = state.tokensByModel['claude-sonnet-4-6'];
+        assert.ok(t);
+        assert.strictEqual(t.inputTokens, 2967082,
+            'tokens.total must NOT override fresh+cached computation');
+    });
 });
 
 // ─── Suite: Inline flag merge ─────────────────────────────────────────────────

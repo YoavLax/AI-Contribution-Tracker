@@ -190,7 +190,9 @@ const AIContributionTracker: Plugin = async ({ directory, worktree }) => {
                     const msgId = info.id || info.messageID;
                     const rawInput = Number(info.tokens.input ?? 0);
                     const cacheRead = Number(info.tokens.cache?.read ?? 0);
-                    const totalInput = Number(info.tokens.total ?? 0) || (rawInput + cacheRead);
+                    // OpenCode normalises tokens.input to fresh-only (cache subtracted) for
+                    // every provider (Anthropic, OpenAI, Gemini).  Total input = fresh + cached.
+                    const totalInput = rawInput + cacheRead;
                     const cur: TokenTotals = { inputTokens: totalInput, outputTokens: Number(info.tokens.output ?? 0),
                         cachedTokens: cacheRead, reasoningTokens: Number(info.tokens.reasoning ?? 0) };
                     const prev = msgId ? sess.lastTokens.get(msgId) : undefined;
