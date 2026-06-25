@@ -1,6 +1,6 @@
 {
   "name": "@rachel_rotenberg/ai-contribution-tracker",
-  "version": "1.0.44",
+  "version": "1.0.45",
   "description": "OpenCode plugin — tracks AI coding sessions and tags git commits with Impacted by AI markers",
   "main": "index.ts",
   "types": "index.ts",
