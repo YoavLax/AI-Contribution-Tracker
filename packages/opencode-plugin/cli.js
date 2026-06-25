@@ -2,7 +2,7 @@
 /**
  * AI Contribution Tracker — Standalone CLI Installer
  *
- * Installs the git commit-msg hook and registers the OpenCode plugin
+ * Installs the git prepare-commit-msg hook and registers the OpenCode plugin
  * without requiring VS Code. Works on macOS, Linux, and Windows.
  *
  * Usage:
@@ -26,13 +26,15 @@ const GIT_COMMON_ABS = [
     '_GIT_COMMON="$(git rev-parse --git-common-dir)"',
     'case "$_GIT_COMMON" in /*) ;; *) _GIT_COMMON="$(pwd)/$_GIT_COMMON" ;; esac',
 ].join("\n");
-const HOOK_DELEGATION = [
-    GIT_COMMON_ABS,
-    'LOCAL_HOOK="$_GIT_COMMON/hooks/commit-msg"',
-    'if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then',
-    '    "$LOCAL_HOOK" "$@" || exit $?',
-    'fi',
-].join("\n");
+function buildHookDelegation(hookName) {
+    return [
+        GIT_COMMON_ABS,
+        `LOCAL_HOOK="$_GIT_COMMON/hooks/${hookName}"`,
+        'if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then',
+        '    "$LOCAL_HOOK" "$@" || exit $?',
+        'fi',
+    ].join("\n");
+}
 
 // ─── Logging helpers ────────────────────────────────────────
 function ok(msg)   { console.log(`  \u2713 ${msg}`); }
@@ -41,8 +43,13 @@ function warn(msg) { console.log(`  ! ${msg}`); }
 function fail(msg) { console.error(`  \u2717 ${msg}`); }
 
 // ─── Git hook body (shell script, runs on all platforms via Git Bash) ───
+// Stamps via prepare-commit-msg, NOT commit-msg: prepare-commit-msg is the only
+// commit-time hook `git commit --no-verify` cannot skip, so AI attribution can't
+// be silently bypassed. $2 is the commit source (merge/squash/message/template);
+// skip merge/squash/amend flows so we never disturb generated commit messages.
 const HOOK_BODY = [
     "# BEGIN ai-contribution-tracker-cli",
+    'case "$2" in merge|squash|commit) exit 0 ;; esac',
     'IMPACT_FLAG=$(git rev-parse --git-path AI_IMPACT_PENDING)',
     'STATE_FILE=$(git rev-parse --git-path ai-tracker-state.json)',
     'if [ -f "$IMPACT_FLAG" ]; then',
@@ -62,34 +69,35 @@ const HOOK_BODY = [
 
 // ─── Git hook installation ──────────────────────────────────
 
-/** Append our hook snippet to an existing commit-msg hook or create a new one. */
+/** Append our hook snippet to an existing prepare-commit-msg hook or create a new one. */
 function appendOrCreateHook(hooksDir) {
-    const hookPath = path.join(hooksDir, "commit-msg");
+    const hookPath = path.join(hooksDir, "prepare-commit-msg");
+    const hookDelegation = buildHookDelegation("prepare-commit-msg");
 
     if (fs.existsSync(hookPath)) {
         let existing = fs.readFileSync(hookPath, "utf8").replace(/\r\n/g, "\n");
         if (existing.includes(HOOK_BEGIN)) {
-            if (!existing.includes(HOOK_DELEGATION.split("\n")[0])) {
+            if (!existing.includes(hookDelegation.split("\n")[0])) {
                 const lines = existing.split("\n");
                 const firstLine = lines[0].replace(/\r$/, "");
-                existing = firstLine + "\n" + HOOK_DELEGATION + "\n" + lines.slice(1).map(l => l.replace(/\r$/, "")).join("\n");
+                existing = firstLine + "\n" + hookDelegation + "\n" + lines.slice(1).map(l => l.replace(/\r$/, "")).join("\n");
                 fs.writeFileSync(hookPath, existing);
                 ok(`Added local hook delegation to: ${hookPath}`);
             } else {
-                skip(`commit-msg hook already up to date: ${hookPath}`);
+                skip(`prepare-commit-msg hook already up to date: ${hookPath}`);
             }
             return;
         }
         if (existing.includes("AI_IMPACT_PENDING")) {
-            skip(`commit-msg hook already handles AI tracking (installed by VS Code extension): ${hookPath}`);
+            skip(`prepare-commit-msg hook already handles AI tracking (installed by VS Code extension): ${hookPath}`);
             return;
         }
         fs.appendFileSync(hookPath, "\n" + HOOK_BODY + "\n");
         ok(`Appended AI tracker snippet to existing hook: ${hookPath}`);
     } else {
-        const content = ("#!/bin/sh\n" + HOOK_DELEGATION + "\n\n" + HOOK_BODY + "\n").replace(/\r\n/g, "\n");
+        const content = ("#!/bin/sh\n" + hookDelegation + "\n\n" + HOOK_BODY + "\n").replace(/\r\n/g, "\n");
         fs.writeFileSync(hookPath, content);
-        ok(`Created commit-msg hook: ${hookPath}`);
+        ok(`Created prepare-commit-msg hook: ${hookPath}`);
     }
 
     // Make executable (no-op on Windows; Git for Windows handles this via Git Bash)
@@ -97,7 +105,7 @@ function appendOrCreateHook(hooksDir) {
 }
 
 const PASSTHROUGH_HOOKS = [
-    "pre-commit", "pre-push", "prepare-commit-msg",
+    "pre-commit", "pre-push", "commit-msg",
     "post-commit", "post-merge", "pre-rebase",
 ];
 
@@ -121,10 +129,40 @@ function ensurePassthroughHooks(hooksDir) {
     }
 }
 
+function removeManagedSnippetFromHook(hooksDir, hookName) {
+    const hookFile = path.join(hooksDir, hookName);
+    if (!fs.existsSync(hookFile)) return false;
 
-/** Install the global git commit-msg hook. */
+    const content = fs.readFileSync(hookFile, "utf8");
+    if (!content.includes(HOOK_BEGIN)) return false;
+
+    const lines = content.split("\n");
+    const filtered = [];
+    let skipping = false;
+
+    for (const line of lines) {
+        if (line.includes(HOOK_BEGIN)) { skipping = true; continue; }
+        if (line.includes(HOOK_END))   { skipping = false; continue; }
+        if (!skipping) filtered.push(line);
+    }
+
+    const hookDelegation = buildHookDelegation(hookName);
+    const remaining = filtered.join("\n")
+        .replace(hookDelegation + "\n", "")
+        .replace(hookDelegation, "")
+        .trim();
+    if (remaining === "#!/bin/sh" || remaining === "") {
+        fs.unlinkSync(hookFile);
+    } else {
+        fs.writeFileSync(hookFile, remaining + "\n");
+    }
+    return true;
+}
+
+
+/** Install the global git prepare-commit-msg hook. */
 function installGitHook() {
-    console.log("\nGit commit-msg hook:");
+    console.log("\nGit prepare-commit-msg hook:");
 
     // Check if core.hooksPath is already set
     let existingPath = "";
@@ -139,11 +177,13 @@ function installGitHook() {
 
     if (existingPath) {
         fs.mkdirSync(existingPath, { recursive: true });
+        removeManagedSnippetFromHook(existingPath, "commit-msg");
         appendOrCreateHook(existingPath);
         ensurePassthroughHooks(existingPath);
     } else {
         const hooksDir = path.join(os.homedir(), ".config", "ai-contribution-tracker", "git-hooks");
         fs.mkdirSync(hooksDir, { recursive: true });
+        removeManagedSnippetFromHook(hooksDir, "commit-msg");
         appendOrCreateHook(hooksDir);
         ensurePassthroughHooks(hooksDir);
 
@@ -225,7 +265,7 @@ function showStatus() {
     } catch { /* not set */ }
 
     if (hooksPath) {
-        const hookFile = path.join(hooksPath, "commit-msg");
+        const hookFile = path.join(hooksPath, "prepare-commit-msg");
         if (fs.existsSync(hookFile) && fs.readFileSync(hookFile, "utf8").includes(HOOK_BEGIN)) {
             ok(`Git hook installed: ${hookFile}`);
         } else {
@@ -260,7 +300,7 @@ function showStatus() {
 // ─── Uninstall ──────────────────────────────────────────────
 
 function removeGitHook() {
-    console.log("\nGit commit-msg hook:");
+    console.log("\nGit prepare-commit-msg hook:");
 
     let hooksPath = "";
     try {
@@ -275,26 +315,19 @@ function removeGitHook() {
         return;
     }
 
-    const hookFile = path.join(hooksPath, "commit-msg");
-    if (!fs.existsSync(hookFile)) {
-        skip(`No commit-msg hook at: ${hookFile}`);
+    const removedPrepareCommitMsg = removeManagedSnippetFromHook(hooksPath, "prepare-commit-msg");
+    const removedCommitMsg = removeManagedSnippetFromHook(hooksPath, "commit-msg");
+
+    if (!removedPrepareCommitMsg && !removedCommitMsg) {
+        skip("Neither prepare-commit-msg nor legacy commit-msg hook contains AI tracker CLI snippet");
         return;
     }
 
-    const content = fs.readFileSync(hookFile, "utf8");
-    if (!content.includes(HOOK_BEGIN)) {
-        skip("commit-msg hook does not contain AI tracker CLI snippet");
-        return;
+    if (removedPrepareCommitMsg) {
+        ok(`Removed prepare-commit-msg hook snippet from: ${path.join(hooksPath, "prepare-commit-msg")}`);
     }
-
-    const lines = content.split("\n");
-    const filtered = [];
-    let skipping = false;
-
-    for (const line of lines) {
-        if (line.includes(HOOK_BEGIN)) { skipping = true; continue; }
-        if (line.includes(HOOK_END))   { skipping = false; continue; }
-        if (!skipping) filtered.push(line);
+    if (removedCommitMsg) {
+        ok(`Removed legacy commit-msg hook snippet from: ${path.join(hooksPath, "commit-msg")}`);
     }
 
     for (const hookName of PASSTHROUGH_HOOKS) {
@@ -308,29 +341,17 @@ function removeGitHook() {
         }
     }
 
-    const remaining = filtered.join("\n")
-        .replace(HOOK_DELEGATION + "\n", "")
-        .replace(HOOK_DELEGATION, "")
-        .trim();
-    if (remaining === "#!/bin/sh" || remaining === "") {
-        fs.unlinkSync(hookFile);
-        ok(`Removed commit-msg hook: ${hookFile}`);
-
-        const ourDefaultDir = path.join(os.homedir(), ".config", "ai-contribution-tracker", "git-hooks");
-        const normalizedHooksPath = hooksPath.replace(/\\/g, "/");
-        const normalizedOurDir = ourDefaultDir.replace(/\\/g, "/");
-        if (normalizedHooksPath === normalizedOurDir) {
-            try {
-                execFileSync("git", ["config", "--global", "--unset", "core.hooksPath"], {
-                    encoding: "utf8",
-                    stdio: ["pipe", "pipe", "pipe"],
-                });
-                ok("Unset git global core.hooksPath");
-            } catch { }
-        }
-    } else {
-        fs.writeFileSync(hookFile, remaining + "\n");
-        ok(`Removed AI tracker snippet from: ${hookFile}`);
+    const ourDefaultDir = path.join(os.homedir(), ".config", "ai-contribution-tracker", "git-hooks");
+    const normalizedHooksPath = hooksPath.replace(/\\/g, "/");
+    const normalizedOurDir = ourDefaultDir.replace(/\\/g, "/");
+    if (normalizedHooksPath === normalizedOurDir) {
+        try {
+            execFileSync("git", ["config", "--global", "--unset", "core.hooksPath"], {
+                encoding: "utf8",
+                stdio: ["pipe", "pipe", "pipe"],
+            });
+            ok("Unset git global core.hooksPath");
+        } catch { }
     }
 }
 
@@ -383,7 +404,7 @@ Usage:
   npx ${PLUGIN_NAME} --help    Show this help message
 
 What gets installed:
-  1. Global git commit-msg hook (tags every AI-assisted commit)
+  1. Global git prepare-commit-msg hook (tags every AI-assisted commit)
   2. OpenCode plugin entry in ~/.config/opencode/opencode.json
 `);
 }
@@ -425,4 +446,3 @@ switch (command) {
         printUsage();
         process.exit(command ? 1 : 0);
 }
-
