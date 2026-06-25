@@ -125,9 +125,15 @@ function writeFlag(g: string, s: TrackerState) {
 // ─── Plugin ─────────────────────────────────────────────────
 
 // ─── Auto Git Hook Installation ─────────────────────────────
-const commitMsgBody = [
+// Stamps via prepare-commit-msg, NOT commit-msg: prepare-commit-msg is the only
+// commit-time hook `git commit --no-verify` cannot skip, so AI attribution can't
+// be silently bypassed. $2 is the commit source (merge/squash/message/template);
+// skip those so we never disturb generated merge/squash messages.
+const PLUGIN_SENTINEL = "# AI Contribution Tracker (opencode-plugin) — stamp AI_IMPACT_PENDING";
+const prepareCommitMsgBody = [
     "",
-    "# AI Contribution Tracker — reads AI_IMPACT_PENDING flag",
+    PLUGIN_SENTINEL,
+    'case "$2" in merge|squash|commit) exit 0 ;; esac',
     'IMPACT_FLAG=$(git rev-parse --git-path AI_IMPACT_PENDING)',
     'STATE_FILE=$(git rev-parse --git-path ai-tracker-state.json)',
     'if [ -f "$IMPACT_FLAG" ]; then',
@@ -142,9 +148,10 @@ const commitMsgBody = [
     'if [ -f "$STATE_FILE" ]; then rm "$STATE_FILE"; fi',
 ].join("\n");
 
+const POST_COMMIT_SENTINEL = "# AI Contribution Tracker (opencode-plugin) — signal commit consumed AI state";
 const postCommitBody = [
     "",
-    "# AI Contribution Tracker — signal plugin that a commit consumed AI state",
+    POST_COMMIT_SENTINEL,
     'touch "$(git rev-parse --git-path AI_IMPACT_CONSUMED 2>/dev/null)" 2>/dev/null || true',
     'rm -f "$(git rev-parse --git-path AI_IMPACT_PENDING 2>/dev/null)" 2>/dev/null',
     'rm -f "$(git rev-parse --git-path ai-tracker-state.json 2>/dev/null)" 2>/dev/null',
@@ -154,13 +161,35 @@ function appendOrCreateHook(hooksDir: string, hookName: string, hookBody: string
     const hookPath = path.join(hooksDir, hookName);
     if (fs.existsSync(hookPath)) {
         const existing = fs.readFileSync(hookPath, "utf8");
-        const marker = hookName === "post-commit" ? "AI_IMPACT_CONSUMED" : "AI_IMPACT_PENDING";
-        if (existing.includes(marker)) return;
+        // Dedup on a plugin-unique sentinel, NOT the shared "AI_IMPACT_PENDING"
+        // string. The VS Code extension's hook also contains that string, so the
+        // old check made the plugin think its hook was already installed and skip
+        // it — deferring to the extension. Keying on our own sentinel lets both
+        // tools' hooks coexist in a shared core.hooksPath dir.
+        const sentinel = hookName === "post-commit" ? POST_COMMIT_SENTINEL : PLUGIN_SENTINEL;
+        if (existing.includes(sentinel)) return;
         fs.appendFileSync(hookPath, "\n" + hookBody + "\n");
     } else {
         fs.writeFileSync(hookPath, "#!/bin/sh\n" + hookBody + "\n");
     }
     try { fs.chmodSync(hookPath, "755"); } catch { /* Windows */ }
+}
+
+// Older versions installed the stamp into commit-msg (bypassable by --no-verify).
+// On upgrade, drop our own commit-msg hook so we don't double-run alongside the
+// new prepare-commit-msg one. Only removes a file we recognize as solely ours.
+const OLD_COMMIT_MSG_SENTINEL = "# AI Contribution Tracker — reads AI_IMPACT_PENDING flag";
+function removeStalePluginCommitMsg(hooksDir: string) {
+    const hookPath = path.join(hooksDir, "commit-msg");
+    if (!fs.existsSync(hookPath)) return;
+    const existing = fs.readFileSync(hookPath, "utf8");
+    if (!existing.includes(OLD_COMMIT_MSG_SENTINEL)) return;
+    const stripped = existing.replace(new RegExp(`\\n*${OLD_COMMIT_MSG_SENTINEL}[\\s\\S]*$`), "\n");
+    if (stripped.trim() === "#!/bin/sh") {
+        try { fs.unlinkSync(hookPath); } catch { /* ok */ }
+    } else {
+        fs.writeFileSync(hookPath, stripped);
+    }
 }
 
 function ensureGitHook() {
@@ -170,12 +199,14 @@ function ensureGitHook() {
         }).trim();
         // Ensure the configured hooks dir exists (it may have been deleted)
         fs.mkdirSync(existingPath, { recursive: true });
-        appendOrCreateHook(existingPath, "commit-msg", commitMsgBody);
+        removeStalePluginCommitMsg(existingPath);
+        appendOrCreateHook(existingPath, "prepare-commit-msg", prepareCommitMsgBody);
         appendOrCreateHook(existingPath, "post-commit", postCommitBody);
     } catch {
         const hooksDir = path.join(os.homedir(), ".config", "ai-contribution-tracker", "git-hooks");
         fs.mkdirSync(hooksDir, { recursive: true });
-        appendOrCreateHook(hooksDir, "commit-msg", commitMsgBody);
+        removeStalePluginCommitMsg(hooksDir);
+        appendOrCreateHook(hooksDir, "prepare-commit-msg", prepareCommitMsgBody);
         appendOrCreateHook(hooksDir, "post-commit", postCommitBody);
         try {
             execSync(`git config --global core.hooksPath "${hooksDir}"`, {
