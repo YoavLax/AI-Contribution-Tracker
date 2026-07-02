@@ -121,6 +121,46 @@ const PASSTHROUGH_HOOKS = [
     "post-commit", "post-merge", "pre-rebase",
 ];
 
+/**
+ * Older versions of the VS Code extension installed their own global
+ * `commit-msg` hook that independently stamps the AI marker (via
+ * hook-handler.js). Now that `prepare-commit-msg` (managed above) is the
+ * single source of truth, that legacy hook is redundant and causes every
+ * commit to get the marker appended twice. Detect it by signature and
+ * replace it with a plain passthrough, backing up the original first.
+ */
+function neutralizeLegacyCommitMsgHook(hooksDir: string): void {
+    const hookPath = path.join(hooksDir, "commit-msg");
+    if (!fs.existsSync(hookPath)) { return; }
+
+    let content = "";
+    try {
+        content = fs.readFileSync(hookPath, "utf8");
+    } catch { return; }
+
+    // Already a CLI-managed or CLI-passthrough hook — nothing to do.
+    if (content.includes(HOOK_BEGIN) || content.includes(PASSTHROUGH_SENTINEL)) { return; }
+
+    const isLegacyExtensionStamper = content.includes("AI_IMPACT_PENDING") &&
+        content.includes("AI Contribution Tracker");
+    if (!isLegacyExtensionStamper) { return; }
+
+    try { fs.copyFileSync(hookPath, hookPath + ".legacy-bak"); } catch { /* ignore */ }
+    const passthrough = [
+        "#!/bin/sh",
+        PASSTHROUGH_SENTINEL,
+        GIT_COMMON_ABS,
+        'LOCAL_HOOK="$_GIT_COMMON/hooks/commit-msg"',
+        'if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then',
+        '    "$LOCAL_HOOK" "$@" || exit $?',
+        "fi",
+        "",
+    ].join("\n");
+    fs.writeFileSync(hookPath, passthrough);
+    try { fs.chmodSync(hookPath, "755"); } catch { /* Windows */ }
+    ok(`Neutralized legacy commit-msg stamper (was double-tagging commits; backed up to ${hookPath}.legacy-bak)`);
+}
+
 function ensurePassthroughHooks(hooksDir: string): void {
     for (const hookName of PASSTHROUGH_HOOKS) {
         const hookPath = path.join(hooksDir, hookName);
@@ -152,6 +192,7 @@ function installGitHook(binaryPathPosix: string): void {
     const hooksDir = existingPath || defaultGitHooksDir();
     fs.mkdirSync(hooksDir, { recursive: true });
     appendOrCreateHook(hooksDir, binaryPathPosix);
+    neutralizeLegacyCommitMsgHook(hooksDir);
     ensurePassthroughHooks(hooksDir);
 
     if (!existingPath) {
