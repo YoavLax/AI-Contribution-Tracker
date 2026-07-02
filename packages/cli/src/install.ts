@@ -215,7 +215,10 @@ function installCopilotHooks(binaryPathPosix: string, binaryPathNative: string):
     fs.mkdirSync(copilotHooksDir, { recursive: true });
 
     const command = `"${binaryPathPosix}" hook`;
-    const windows = `"${binaryPathNative}" hook`;
+    // PowerShell requires the call operator (&) to invoke a quoted path — without
+    // it, "path" hook is a parse error ("Unexpected token 'hook'"), which surfaces
+    // to the user as a "Warning from Stop hook" (and every other event) on Windows.
+    const windows = `& "${binaryPathNative}" hook`;
     const entry = (timeout: number) => [{ type: "command", command, windows, timeout }];
 
     const hookConfig = {
