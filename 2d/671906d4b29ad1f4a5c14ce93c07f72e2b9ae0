@@ -1,0 +1,31 @@
+install.sh
+  s_649b80f812b8d5::t_a66ee5c8ab8f96 10-11,34
+.github/workflows/release-cli.yml
+  s_649b80f812b8d5::t_5b86a91b892bdf 4-5
+.gitignore
+  s_649b80f812b8d5::t_34e192122ff8a5 21-23
+README.md
+  s_649b80f812b8d5::t_55f88bbfbc1db6 294
+install.ps1
+  s_649b80f812b8d5::t_50a521070cecb0 11-12,23
+packages/cli/scripts/build-binaries.ts
+  s_649b80f812b8d5::t_7d2b904d4afcfa 3
+packages/cli/src/update.ts
+  s_649b80f812b8d5::t_25959c6b7beb7a 9-13,24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "2d671906d4b29ad1f4a5c14ce93c07f72e2b9ae0",
+  "prompts": {},
+  "sessions": {
+    "s_649b80f812b8d5": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "77a01295-8493-4d14-a37c-f2b438208013",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Yoav Lax <ylax@varonis.com>"
+    }
+  }
+}
