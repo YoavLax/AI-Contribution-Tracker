@@ -1,0 +1,23 @@
+install.sh
+  s_649b80f812b8d5::t_e548cda486d430 4
+README.md
+  s_649b80f812b8d5::t_1d17886666f016 30,35
+install.ps1
+  s_649b80f812b8d5::t_4c6fa5827595f2 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "ef2563f6778b5459ab821b207d64f11ef047d83d",
+  "prompts": {},
+  "sessions": {
+    "s_649b80f812b8d5": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "77a01295-8493-4d14-a37c-f2b438208013",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Yoav Lax <ylax@varonis.com>"
+    }
+  }
+}
