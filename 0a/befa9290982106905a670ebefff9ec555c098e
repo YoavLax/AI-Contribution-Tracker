@@ -1,0 +1,109 @@
+packages/cli/src/install.ts
+  s_649b80f812b8d5::t_37f7b63a05c8b9 1-378
+packages/cli/src/status.ts
+  s_649b80f812b8d5::t_d80a7bc629b14a 1-96
+packages/cli/src/hook.ts
+  s_649b80f812b8d5::t_29bbc3b4d145bb 16-20
+  s_649b80f812b8d5::t_19d54fcc4e9093 1-15,21-46
+packages/cli/src/remove.ts
+  s_649b80f812b8d5::t_a0adfbf177ce06 1-149
+packages/cli/src/cli.ts
+  s_649b80f812b8d5::t_8cf3126fa6782c 1-79
+packages/cli/scripts/build-binaries.ts
+  s_649b80f812b8d5::t_19b242b2cd61f1 1-28
+install.sh
+  s_649b80f812b8d5::t_734f044781f5d7 1-90
+install.ps1
+  s_649b80f812b8d5::t_7c68487bc71062 1-66
+.github/workflows/release-cli.yml
+  s_649b80f812b8d5::t_e357c3aea3ed4c 27
+  s_649b80f812b8d5::t_b1403992618ba9 1-26,28-32,37-64
+  s_649b80f812b8d5::t_c22c74b9e4f794 33-36
+packages/cli/scripts/e2e-test.ps1
+  s_649b80f812b8d5::t_aaf26da5d9202a 3-63
+  s_649b80f812b8d5::t_5303fb381731b3 1-2
+packages/cli/test/e2e.test.ts
+  s_649b80f812b8d5::t_32fd04e1c6a29e 36-43,92
+  s_649b80f812b8d5::t_426c4ab7a1f0af 54-59,76
+  s_649b80f812b8d5::t_a4cef371dc6f07 25-27
+  s_649b80f812b8d5::t_dc947e00ebbc4a 3-14,46-53,80-89,98-101
+  s_649b80f812b8d5::t_0bff448eb94c7e 60-63
+  s_649b80f812b8d5::t_a2e03b517320b9 21-24,28-33
+  s_649b80f812b8d5::t_f5324493b9a777 1-2
+  s_649b80f812b8d5::t_3c003b884a9bcf 15-20
+  s_649b80f812b8d5::t_888a7110cf4f80 34-35
+  s_649b80f812b8d5::t_8f297460dd9d69 44-45
+  s_649b80f812b8d5::t_40ddd76de6dc3d 64-66,73-75
+  s_649b80f812b8d5::t_eea4a67c295e94 77-79
+  s_649b80f812b8d5::t_3ba748f013f600 90-91
+  s_649b80f812b8d5::t_4aa07ff610afb3 93-97
+  s_649b80f812b8d5::t_b53bc4c956e413 102-104
+  s_649b80f812b8d5::t_22c98efa07cee5 67-72,105
+src/extension.ts
+  s_649b80f812b8d5::t_b11db5b509ac24 36-39,41-55,109,111,114,130,152
+  s_649b80f812b8d5::t_1587bfc20c2f56 99-106,127,134,137
+  s_649b80f812b8d5::t_91e63be9ae36aa 6,12-20
+  s_649b80f812b8d5::t_500a5c80beafaf 107-108
+  s_649b80f812b8d5::t_a76d4d2ba443cb 110
+  s_649b80f812b8d5::t_d83b27521ac00c 112-113
+  s_649b80f812b8d5::t_93fc65aa8fc9e3 115-117,124-126
+  s_649b80f812b8d5::t_32288e8d607ac1 128-129
+  s_649b80f812b8d5::t_5a3a848ab4980f 131-133
+  s_649b80f812b8d5::t_c7d34057c00fc8 135-136
+  s_649b80f812b8d5::t_52aaf474e810b9 138-140,149-151
+  s_649b80f812b8d5::t_852809e2614301 153-154
+  s_649b80f812b8d5::t_7475b485270d2e 118-123,141-148,903-923
+packages/cli/test/core.test.ts
+  s_649b80f812b8d5::t_c572aecf4720a9 1-135
+README.md
+  s_649b80f812b8d5::t_d09d6b609fcccc 39-51,292
+  s_649b80f812b8d5::t_8746cd113f658a 37-38
+  s_649b80f812b8d5::t_e84ebcf2d2884b 22-36,288
+  s_649b80f812b8d5::t_dab0d5d4ddad24 52-54
+  s_649b80f812b8d5::t_7bac3f707b580c 285-287
+  s_649b80f812b8d5::t_c51acaab0a2d06 289-291
+  s_649b80f812b8d5::t_2ba58a8ee190f6 293-294
+  s_649b80f812b8d5::t_b62a86f61016d9 55-57,250-251,280-281,284
+packages/cli/tsconfig.json
+  s_649b80f812b8d5::t_c1e8252a9834fd 1-16
+packages/cli/src/paths.ts
+  s_649b80f812b8d5::t_98863f6edde662 1-88
+packages/cli/package.json
+  s_649b80f812b8d5::t_63bfdc6bece0d9 1-14,16-35,41-42
+  s_649b80f812b8d5::t_d4696a506ee35b 15
+  s_649b80f812b8d5::t_67dc4bce14dfe1 36-38
+  s_649b80f812b8d5::t_51099aa9d75362 39-40
+packages/cli/src/update.ts
+  s_649b80f812b8d5::t_cac6ca9b76ad60 1-54
+.gitattributes
+  s_649b80f812b8d5::t_3d0aa25e15d391 1-7
+src/hook-handler.ts
+  s_649b80f812b8d5::t_937a6a805ba26b 111-115
+  s_649b80f812b8d5::t_a9145e1ed9c3fd 22-102,104-110,130
+  s_649b80f812b8d5::t_6944dacbef4c79 103
+  s_649b80f812b8d5::t_825090b113c409 116-129,914,916
+  s_649b80f812b8d5::t_c3c4f73371e191 131
+  s_649b80f812b8d5::t_2b11910e90534b 911-913
+  s_649b80f812b8d5::t_0a3e4ba0f76a50 917
+  s_649b80f812b8d5::t_dc644062069a25 231-232,266,320,332,906-907,929-931,953-954
+packages/cli/bun.lock
+  s_649b80f812b8d5::t_5a3ea51be485df 1-24
+esbuild.js
+  s_649b80f812b8d5::t_c35d8d35c62160 53-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "0abefa9290982106905a670ebefff9ec555c098e",
+  "prompts": {},
+  "sessions": {
+    "s_649b80f812b8d5": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "77a01295-8493-4d14-a37c-f2b438208013",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Yoav Lax <ylax@varonis.com>"
+    }
+  }
+}
