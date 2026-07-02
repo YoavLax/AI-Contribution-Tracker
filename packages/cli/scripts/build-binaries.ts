@@ -26,6 +26,9 @@ for (const { target, asset } of TARGETS) {
 
     if (target.startsWith("bun-darwin")) {
         try {
+            // Strip Bun's embedded (incomplete) signature slot before ad-hoc
+            // signing, or codesign rejects it with "invalid or unsupported format".
+            await $`codesign --remove-signature ${outfile}`.quiet().nothrow();
             await $`codesign --sign - --force ${outfile}`.quiet();
             console.log(`  ad-hoc signed ${asset}`);
         } catch {
