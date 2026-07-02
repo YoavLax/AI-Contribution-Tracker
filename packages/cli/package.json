@@ -1,6 +1,6 @@
 {
   "name": "@tracker/ai-tracker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Standalone, self-contained CLI that tags every git commit with AI usage metadata (models, tokens, prompts). No VS Code required.",
   "bin": {
     "ai-track": "dist/ai-track.js"
