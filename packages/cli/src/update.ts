@@ -10,7 +10,7 @@ import { binDir, binaryName, ok, warn, fail } from "./paths.ts";
 // Override with AI_TRACK_ASSET_BASE for testing/forks.
 const ASSET_BASE =
     process.env.AI_TRACK_ASSET_BASE ||
-    "https://github.com/Varonis-Systems/AI-Contribution-Tracker/releases/latest/download";
+    "https://github.com/YoavLax/AI-Contribution-Tracker/releases/latest/download";
 
 function assetName(): string {
     const arch = process.arch === "arm64" ? "arm64" : "x64";

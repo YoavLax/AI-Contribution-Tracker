@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # AI Contribution Tracker — one-line installer (macOS / Linux)
 #
-#   curl -sSL https://raw.githubusercontent.com/Varonis-Systems/AI-Contribution-Tracker/refs/heads/feat/standalone-cli-distribution/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/YoavLax/AI-Contribution-Tracker/refs/heads/feat/standalone-cli-distribution/install.sh | bash
 #
 # Downloads the self-contained `ai-track` binary for your platform, installs it
 # to ~/.local/bin, and runs `ai-track init`. No Node, no npm, no VS Code required.
 set -euo pipefail
 
 # Binaries are attached to the latest GitHub Release. Override for forks/testing.
-ASSET_BASE="${AI_TRACK_ASSET_BASE:-https://github.com/Varonis-Systems/AI-Contribution-Tracker/releases/latest/download}"
+ASSET_BASE="${AI_TRACK_ASSET_BASE:-https://github.com/YoavLax/AI-Contribution-Tracker/releases/latest/download}"
 INSTALL_DIR="${AI_TRACK_INSTALL_DIR:-$HOME/.local/bin}"
 BIN_NAME="ai-track"
 
