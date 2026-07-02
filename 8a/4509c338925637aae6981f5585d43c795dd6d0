@@ -1,0 +1,26 @@
+install.sh
+  s_649b80f812b8d5::t_faac8bac82706d 4
+  s_649b80f812b8d5::t_759a4ea9ab6a5a 11
+README.md
+  s_649b80f812b8d5::t_4ecad6608a099b 30,35
+install.ps1
+  s_649b80f812b8d5::t_e03956e1bbdf94 3,12
+packages/cli/src/update.ts
+  s_649b80f812b8d5::t_16b9467bd6dd1b 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "8a4509c338925637aae6981f5585d43c795dd6d0",
+  "prompts": {},
+  "sessions": {
+    "s_649b80f812b8d5": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "77a01295-8493-4d14-a37c-f2b438208013",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Yoav Lax <ylax@varonis.com>"
+    }
+  }
+}
