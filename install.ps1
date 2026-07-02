@@ -1,6 +1,6 @@
 # AI Contribution Tracker — one-line installer (Windows)
 #
-#   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Varonis-Systems/AI-Contribution-Tracker/master/install.ps1 | iex"
+#   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Varonis-Systems/AI-Contribution-Tracker/refs/heads/feat/standalone-cli-distribution/install.ps1 | iex"
 #
 # Downloads the self-contained ai-track.exe, installs it to
 # %LOCALAPPDATA%\ai-track\bin, adds it to PATH, and runs `ai-track init`.
