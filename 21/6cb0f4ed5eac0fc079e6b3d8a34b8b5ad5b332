@@ -1,0 +1,22 @@
+packages/cli/src/update.ts
+  s_083fd3958fac28::t_75335e90adf9e7 7
+  s_083fd3958fac28::t_f42e42c021b003 35-58
+install.sh
+  s_083fd3958fac28::t_7bd732a89e3ff1 53-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "216cb0f4ed5eac0fc079e6b3d8a34b8b5ad5b332",
+  "prompts": {},
+  "sessions": {
+    "s_083fd3958fac28": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ses_0e22e1965ffe1OlzEez6He8uAv",
+        "model": "unknown"
+      },
+      "human_author": "Rachel Rotenberg <rrotenberg@varonis.com>"
+    }
+  }
+}
