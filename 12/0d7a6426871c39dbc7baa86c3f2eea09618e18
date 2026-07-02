@@ -1,0 +1,19 @@
+.github/workflows/release-cli.yml
+  s_b97f304db74ad7::t_6cad46f8de12e7 17-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "120d7a6426871c39dbc7baa86c3f2eea09618e18",
+  "prompts": {},
+  "sessions": {
+    "s_b97f304db74ad7": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "f9f42d0d-fcd6-4d10-83d9-caa6fe97eb42",
+        "model": "unknown"
+      },
+      "human_author": "Yoav Lax <ylax@varonis.com>"
+    }
+  }
+}
