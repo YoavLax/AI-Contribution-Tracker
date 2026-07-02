@@ -1,0 +1,21 @@
+install.sh
+  s_083fd3958fac28::t_9bbeb664b89b64 58-61
+packages/cli/scripts/build-binaries.ts
+  s_083fd3958fac28::t_458f759aee1b6f 29-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "e87f8a3a631caf321604da1d8c1864c9c6e7e7e9",
+  "prompts": {},
+  "sessions": {
+    "s_083fd3958fac28": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ses_0e22e1965ffe1OlzEez6He8uAv",
+        "model": "unknown"
+      },
+      "human_author": "Rachel Rotenberg <rrotenberg@varonis.com>"
+    }
+  }
+}
