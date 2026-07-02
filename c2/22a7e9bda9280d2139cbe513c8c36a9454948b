@@ -1,0 +1,21 @@
+packages/cli/package.json
+  s_649b80f812b8d5::t_d519166cf55399 3
+packages/cli/src/cli.ts
+  s_649b80f812b8d5::t_131304343cc650 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.8",
+  "base_commit_sha": "c222a7e9bda9280d2139cbe513c8c36a9454948b",
+  "prompts": {},
+  "sessions": {
+    "s_649b80f812b8d5": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "77a01295-8493-4d14-a37c-f2b438208013",
+        "model": "unknown"
+      },
+      "human_author": "Yoav Lax <ylax@varonis.com>"
+    }
+  }
+}
