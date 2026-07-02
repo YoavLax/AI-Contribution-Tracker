@@ -19,6 +19,42 @@
 
 ---
 
+## Install
+
+### Option A — Standalone CLI (recommended, no VS Code required)
+
+A single self-contained binary. No Node, no npm — everything is bundled.
+
+**macOS / Linux**
+```bash
+curl -sSL https://raw.githubusercontent.com/YoavLax/AI-Contribution-Tracker/main/install.sh | bash
+```
+
+**Windows (PowerShell)**
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/YoavLax/AI-Contribution-Tracker/main/install.ps1 | iex"
+```
+
+The installer downloads the `ai-track` binary, adds it to your `PATH`, runs `ai-track init`, and (if the `code` CLI is available) installs the VS Code companion extension for inline-suggestion tracking. From then on every AI-assisted commit is tagged automatically — no per-repo setup.
+
+```text
+ai-track init      Install git hook + agent hooks + enable token tracking
+ai-track status    Show installation status
+ai-track doctor    Verify and repair the installation
+ai-track update    Update to the latest binary
+ai-track remove    Uninstall everything
+```
+
+`init` wires up: a global git `prepare-commit-msg` hook, Copilot (VS Code + CLI) hooks, Claude Code hooks, the OpenCode plugin, and it enables Copilot's local OTEL token exporter in your VS Code settings.
+
+### Option B — VS Code Marketplace
+
+Install [**AI Contribution Tracker**](https://marketplace.visualstudio.com/items?itemName=YoavLax.ai-contribution-tracker) from the Marketplace. If the standalone binary is present, the extension defers all hook setup to it (single source of truth) and adds inline-suggestion tracking on top.
+
+> **Inline-suggestion tracking** (ghost-text acceptances) requires the VS Code companion extension. All agent, model, and token tracking works from the CLI alone.
+
+---
+
 ## What Gets Recorded
 
 Every AI-assisted commit automatically receives a detailed marker. Here are real examples:
@@ -211,6 +247,8 @@ Impacted by AI (Agent mode: opencode/senna | Model: claude-opus-4-6 | Prompts: 2
 - Git initialized in your repository
 - Node.js 22+ (for `node:sqlite` built-in — included with VS Code's bundled Node)
 
+> The **standalone CLI** (Option A) bundles its own runtime and has **no external requirements** — Node is not needed. Token tracking still reads Copilot's local OTEL database, so open VS Code Copilot Chat at least once to create it.
+
 ---
 
 ## Core Team
@@ -239,10 +277,21 @@ Press **F5** to launch the Extension Development Host for debugging.
 
 | File | Purpose |
 |---|---|
-| `src/extension.ts` | Extension activation, global git hooks setup, Copilot hooks config, OTEL enablement |
-| `src/hook-handler.ts` | Standalone Node.js hook handler — session tracking, token DB query, marker formatting |
+| `src/extension.ts` | Extension activation, global git hooks setup, Copilot hooks config, OTEL enablement, binary delegation |
+| `src/hook-handler.ts` | Shared core — session tracking, token DB query, marker formatting (portable across the extension and the standalone binary) |
 | `src/tracker.ts` | Inline suggestion detection via deterministic command interception |
 | `src/opencode-plugin.ts` | OpenCode plugin — session tracking, token accumulation via `message.updated`, writes to the same flag files as Copilot hooks |
+| `packages/cli/` | Standalone `@tracker/ai-tracker` CLI (`ai-track`) — imports the same `src/hook-handler.ts` core; compiled to a self-contained binary with Bun |
+
+### Standalone CLI
+
+```bash
+cd packages/cli
+bun test                       # core + git-integration tests
+bun run build:bin              # cross-compile binaries for all platforms → ../../bin
+```
+
+Binaries are published to `bin/` (served via GitHub raw) and a GitHub Release by [`.github/workflows/release-cli.yml`](.github/workflows/release-cli.yml) on a `cli-v*` tag.
 
 ---
 

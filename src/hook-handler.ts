@@ -19,6 +19,116 @@ import * as path from 'path';
 import * as os from 'os';
 import { execSync } from 'child_process';
 
+// ─── Portable Path Resolution ────────────────────────────────────────────────
+// The core logic runs in two contexts:
+//   1. Inside the VS Code extension — hook-handler.js lives in the extension's
+//      globalStorage, so cross-repo data files sit at __dirname/.. and the
+//      Copilot OTEL DB at __dirname/../../github.copilot-chat/agent-traces.db.
+//   2. As the standalone `ai-track` binary — it sets AI_TRACKER_DATA_DIR (and
+//      optionally AI_TRACKER_OTEL_DB) so this same logic finds the same files
+//      regardless of where the binary lives.
+
+/** Directory holding cross-repo state: active-workspace.json, pending/, session-repo-map.json */
+export function getDataDir(): string {
+    const override = process.env.AI_TRACKER_DATA_DIR;
+    if (override && override.trim()) {
+        try { fs.mkdirSync(override, { recursive: true }); } catch { /* best effort */ }
+        return override;
+    }
+    return path.join(__dirname, '..');
+}
+
+/** Candidate VS Code globalStorage roots across stable + Insiders on all platforms. */
+function getVSCodeGlobalStorageDirs(): string[] {
+    const home = os.homedir();
+    const dirs: string[] = [];
+    if (process.platform === 'win32') {
+        const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+        dirs.push(
+            path.join(appData, 'Code', 'User', 'globalStorage'),
+            path.join(appData, 'Code - Insiders', 'User', 'globalStorage'),
+        );
+    } else if (process.platform === 'darwin') {
+        const base = path.join(home, 'Library', 'Application Support');
+        dirs.push(
+            path.join(base, 'Code', 'User', 'globalStorage'),
+            path.join(base, 'Code - Insiders', 'User', 'globalStorage'),
+        );
+    } else {
+        const base = path.join(home, '.config');
+        dirs.push(
+            path.join(base, 'Code', 'User', 'globalStorage'),
+            path.join(base, 'Code - Insiders', 'User', 'globalStorage'),
+        );
+    }
+    return dirs;
+}
+
+/**
+ * Resolve the Copilot OTEL SQLite DB (agent-traces.db).
+ * Order: explicit env override → extension-relative legacy path → discovery of
+ * the most-recently-modified agent-traces.db under VS Code globalStorage.
+ * The final discovery step is what lets the standalone binary read the same
+ * token data the extension writes, even though it lives outside globalStorage.
+ */
+export function resolveOtelDbPath(): string | null {
+    const override = process.env.AI_TRACKER_OTEL_DB;
+    if (override && fs.existsSync(override)) { return override; }
+
+    const legacy = path.join(__dirname, '..', '..', 'github.copilot-chat', 'agent-traces.db');
+    if (fs.existsSync(legacy)) { return legacy; }
+
+    let best: { p: string; mtime: number } | null = null;
+    for (const gs of getVSCodeGlobalStorageDirs()) {
+        const candidate = path.join(gs, 'github.copilot-chat', 'agent-traces.db');
+        try {
+            if (fs.existsSync(candidate)) {
+                const mtime = fs.statSync(candidate).mtimeMs;
+                if (!best || mtime > best.mtime) { best = { p: candidate, mtime }; }
+            }
+        } catch { /* ignore unreadable */ }
+    }
+    return best ? best.p : null;
+}
+
+interface ReadOnlyDb {
+    all(sql: string, params: unknown[]): Array<Record<string, unknown>>;
+    close(): void;
+}
+
+/**
+ * Open a read-only SQLite handle, supporting both Bun (bun:sqlite, used by the
+ * compiled binary) and Node 22+ (node:sqlite, used by the VS Code extension).
+ * Uses runtime `require` (kept out of static bundler analysis via the `external`
+ * config) so neither driver is eagerly resolved in the wrong runtime.
+ */
+function openReadOnlyDb(dbPath: string): ReadOnlyDb | null {
+    const g = globalThis as unknown as { Bun?: unknown };
+    if (g.Bun) {
+        try {
+            const { Database } = require('bun:sqlite');
+            const db = new Database(dbPath, { readonly: true });
+            return {
+                all: (sql, params) => db.query(sql).all(...params) as Array<Record<string, unknown>>,
+                close: () => db.close(),
+            };
+        } catch {
+            return null;
+        }
+    }
+    try {
+        // node:sqlite is built-in since Node 22 — no npm dependency needed
+        const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
+        const db = new DatabaseSync(dbPath, { readOnly: true });
+        return {
+            all: (sql, params) => db.prepare(sql).all(...(params as Array<string | number | bigint | null | Uint8Array>)) as Array<Record<string, unknown>>,
+            close: () => db.close(),
+        };
+    } catch {
+        return null;
+    }
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface HookInput {
@@ -118,9 +228,8 @@ export function findGitDir(cwd: string): string | null {
  */
 export function findGitDirFromActiveWorkspace(): string | null {
     try {
-        // hook-handler.js lives at: globalStorage/copilot-hooks/hook-handler.js
-        // active-workspace.json is at: globalStorage/active-workspace.json
-        const activeWorkspacePath = path.join(__dirname, '..', 'active-workspace.json');
+        // Written by the VS Code extension into its globalStorage (or the binary's data dir).
+        const activeWorkspacePath = path.join(getDataDir(), 'active-workspace.json');
         if (!fs.existsSync(activeWorkspacePath)) { return null; }
 
         const data = JSON.parse(fs.readFileSync(activeWorkspacePath, 'utf8')) as { workspaces?: string[] };
@@ -154,7 +263,7 @@ export function findGitDirFromActiveWorkspace(): string | null {
  */
 function migrateStateFromOtherWorkspaces(targetGitDir: string): TrackerState | null {
     try {
-        const activeWorkspacePath = path.join(__dirname, '..', 'active-workspace.json');
+        const activeWorkspacePath = path.join(getDataDir(), 'active-workspace.json');
         if (!fs.existsSync(activeWorkspacePath)) { return null; }
 
         const data = JSON.parse(fs.readFileSync(activeWorkspacePath, 'utf8')) as { workspaces?: string[] };
@@ -208,7 +317,7 @@ function migrateStateFromOtherWorkspaces(targetGitDir: string): TrackerState | n
  * At CommitMsg time, this pending state is consumed and moved to the correct repo.
  */
 export function getPendingStateDir(): string {
-    const dir = path.join(__dirname, '..', 'pending');
+    const dir = path.join(getDataDir(), 'pending');
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
@@ -220,7 +329,7 @@ export function getPendingStateDir(): string {
 const SESSION_MAP_FILENAME = 'session-repo-map.json';
 
 function getSessionMapPath(): string {
-    return path.join(__dirname, '..', SESSION_MAP_FILENAME);
+    return path.join(getDataDir(), SESSION_MAP_FILENAME);
 }
 
 function saveSessionRepo(sessionId: string, gitDir: string): void {
@@ -794,17 +903,18 @@ export interface TokenTotals {
  * i.e. two levels up, then into github.copilot-chat/.
  */
 export function queryTokensFromOtel(sessionId: string, afterMs: number): Record<string, TokenTotals> | null {
-    const dbPath = path.join(__dirname, '..', '..', 'github.copilot-chat', 'agent-traces.db');
-    if (!fs.existsSync(dbPath)) {
+    const dbPath = resolveOtelDbPath();
+    if (!dbPath || !fs.existsSync(dbPath)) {
         return null;
     }
 
-    try {
-        // node:sqlite is built-in since Node 22 — no npm dependency needed
-        const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
-        const db = new DatabaseSync(dbPath, { readOnly: true });
+    const db = openReadOnlyDb(dbPath);
+    if (!db) {
+        return null; // no sqlite driver available or DB locked
+    }
 
-        const rows = db.prepare(
+    try {
+        const rows = db.all(
             `SELECT
                response_model                       AS model,
                COALESCE(SUM(input_tokens), 0)       AS inputTokens,
@@ -816,8 +926,9 @@ export function queryTokensFromOtel(sessionId: string, afterMs: number): Record<
                AND operation_name  = 'chat'
                AND response_model  IS NOT NULL
                AND start_time_ms  >= ?
-             GROUP BY response_model`
-        ).all(sessionId, sessionId, afterMs) as Array<{ model: string; inputTokens: number; outputTokens: number; cachedTokens: number; reasoningTokens: number }>;
+             GROUP BY response_model`,
+            [sessionId, sessionId, afterMs]
+        ) as Array<{ model: string; inputTokens: number; outputTokens: number; cachedTokens: number; reasoningTokens: number }>;
 
         db.close();
 
@@ -839,7 +950,8 @@ export function queryTokensFromOtel(sessionId: string, afterMs: number): Record<
 
         return Object.keys(result).length > 0 ? result : null;
     } catch {
-        // node:sqlite unavailable or DB locked — skip silently
+        // Query failed or DB locked — skip silently
+        try { db.close(); } catch { /* ignore */ }
         return null;
     }
 }

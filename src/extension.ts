@@ -3,11 +3,20 @@ import * as vscode from 'vscode';
 import { CopilotTracker } from './tracker';
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import * as os from 'os';
 
 // Create a global output channel
 export const logger = vscode.window.createOutputChannel("AI Tracker Debug");
+
+/**
+ * When the standalone `ai-track` binary is installed, it becomes the single
+ * source of truth for hook installation. The extension then only performs
+ * editor-specific work (inline tracking + enabling OTEL) and delegates all
+ * hook/plugin setup to the binary — avoiding duplicate handlers that would
+ * double-count prompts and tokens.
+ */
+let binaryManaged = false;
 
 // Minimal Git API definition
 interface GitAPI {
@@ -23,18 +32,27 @@ interface GitExtension {
 export function activate(context: vscode.ExtensionContext) {
     logger.appendLine('ACTIVATE: Extension is starting...');
 	console.log('ACTIVATE: Extension is starting (console)...');
-    
-    // Setup global git hooks
-    setupGlobalGitHooks(context);
-    
-    // Setup Copilot agent hooks
-    setupCopilotHooks(context);
 
-    // Setup Claude Code hooks (if Claude Code is installed)
-    setupClaudeCodeHooks(context);
+    // If the standalone ai-track binary is installed, delegate ALL hook/plugin
+    // installation to it (single source of truth). Otherwise fall back to the
+    // extension's own setup (legacy behavior — unchanged for existing users).
+    binaryManaged = tryDelegateToBinary();
 
-    // Setup OpenCode plugin (auto-install to ~/.config/opencode/plugins/)
-    setupOpenCodePlugin(context);
+    if (!binaryManaged) {
+        // Setup global git hooks
+        setupGlobalGitHooks(context);
+
+        // Setup Copilot agent hooks
+        setupCopilotHooks(context);
+
+        // Setup Claude Code hooks (if Claude Code is installed)
+        setupClaudeCodeHooks(context);
+
+        // Setup OpenCode plugin (auto-install to ~/.config/opencode/plugins/)
+        setupOpenCodePlugin(context);
+    } else {
+        logger.appendLine('[Setup] ai-track binary detected — hook installation delegated to it.');
+    }
 
     // Register cleanup command
     context.subscriptions.push(
@@ -76,6 +94,62 @@ export function activate(context: vscode.ExtensionContext) {
     );
     
     return { tracker };
+}
+
+/**
+ * Locate the installed `ai-track` binary, if any. Checks the install-script
+ * default location first, then PATH.
+ */
+function findAiTrackBinary(): string | null {
+    const name = process.platform === 'win32' ? 'ai-track.exe' : 'ai-track';
+    const candidates: string[] = [];
+    if (process.platform === 'win32') {
+        const local = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+        candidates.push(path.join(local, 'ai-track', 'bin', name));
+    } else {
+        candidates.push(path.join(os.homedir(), '.local', 'bin', name));
+    }
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) { return candidate; }
+    }
+    // PATH lookup
+    try {
+        const lookup = process.platform === 'win32' ? `where ${name}` : `command -v ${name}`;
+        const found = execSync(lookup, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
+            .split('\n')[0].trim();
+        if (found && fs.existsSync(found)) { return found; }
+    } catch { /* not on PATH */ }
+    return null;
+}
+
+/** The binary's data directory (mirrors packages/cli/src/paths.ts). */
+function getBinaryDataDir(): string {
+    if (process.platform === 'win32') {
+        const local = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+        return path.join(local, 'ai-track', 'data');
+    }
+    return path.join(os.homedir(), '.ai-track', 'data');
+}
+
+/**
+ * If the ai-track binary is present, run its idempotent installer so it owns
+ * git/agent hook setup. Returns true only when the binary handled installation.
+ */
+function tryDelegateToBinary(): boolean {
+    try {
+        const bin = findAiTrackBinary();
+        if (!bin) { return false; }
+        const result = spawnSync(bin, ['init'], { encoding: 'utf8', timeout: 30000 });
+        if (result.status === 0) {
+            logger.appendLine(`[Setup] Delegated hook installation to ai-track binary: ${bin}`);
+            return true;
+        }
+        logger.appendLine(`[Setup] ai-track init exited ${result.status} — falling back to extension setup`);
+        return false;
+    } catch (error) {
+        logger.appendLine(`[Setup] Binary delegation error (${error}) — falling back to extension setup`);
+        return false;
+    }
 }
 
 /**
@@ -826,6 +900,27 @@ function setupActiveWorkspaceFile(context: vscode.ExtensionContext): void {
         }
         const merged = [...new Set([...existing, ...gitDirs])];
         fs.writeFileSync(outPath, JSON.stringify({ workspaces: merged }));
+
+        // When the standalone binary owns hooks, mirror the list into its data
+        // dir so its repo-resolution fallback works for CLI-fired hook events.
+        if (binaryManaged) {
+            try {
+                const binDataDir = getBinaryDataDir();
+                fs.mkdirSync(binDataDir, { recursive: true });
+                const binOutPath = path.join(binDataDir, 'active-workspace.json');
+                let binExisting: string[] = [];
+                if (fs.existsSync(binOutPath)) {
+                    try {
+                        const data = JSON.parse(fs.readFileSync(binOutPath, 'utf8'));
+                        binExisting = Array.isArray(data.workspaces) ? data.workspaces : [];
+                    } catch { /* corrupt file, overwrite */ }
+                }
+                const binMerged = [...new Set([...binExisting, ...gitDirs])];
+                fs.writeFileSync(binOutPath, JSON.stringify({ workspaces: binMerged }));
+            } catch (e) {
+                logger.appendLine(`[setupActiveWorkspaceFile] binary mirror error: ${e}`);
+            }
+        }
     } catch (e) {
         logger.appendLine(`[setupActiveWorkspaceFile] error: ${e}`);
     }

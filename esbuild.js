@@ -50,7 +50,9 @@ async function main() {
 		...sharedOptions,
 		entryPoints: ['src/hook-handler.ts'],
 		outfile: 'dist/hook-handler.js',
-		external: [],
+		// bun:sqlite is only require()'d at runtime under the Bun-compiled binary;
+		// keep it external so the Node build doesn't try to resolve it.
+		external: ['bun:sqlite'],
 	});
 
 	// OpenCode plugin - ESM format (matches OpenCode plugin loader)

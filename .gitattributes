@@ -1,0 +1,7 @@
+# Shell scripts and generated POSIX hooks must use LF, even on Windows checkouts,
+# so `curl ... | bash` and git hooks execute correctly.
+*.sh text eol=lf
+install.sh text eol=lf
+
+# PowerShell scripts are fine with CRLF on Windows.
+*.ps1 text eol=crlf

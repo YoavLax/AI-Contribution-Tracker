@@ -1,0 +1,64 @@
+name: Build & Publish ai-track CLI
+
+# Bun can cross-compile every target from a single runner, so one job produces
+# all platform binaries. On a version tag they are committed to bin/ (served via
+# GitHub raw) and also attached to a GitHub Release.
+on:
+  push:
+    tags:
+      - "cli-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install CLI deps
+        working-directory: packages/cli
+        run: bun install
+
+      - name: Type-check
+        working-directory: packages/cli
+        run: bun run typecheck
+
+      - name: Run tests
+        working-directory: packages/cli
+        run: bun test
+
+      - name: Cross-compile all binaries
+        working-directory: packages/cli
+        run: bun run scripts/build-binaries.ts
+
+      - name: Generate checksums
+        run: |
+          cd bin
+          sha256sum ai-track-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Commit binaries to bin/ (raw hosting)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          cp bin/ai-track-* bin/SHA256SUMS "$RUNNER_TEMP/" 2>/dev/null || true
+          git add bin/ai-track-* bin/SHA256SUMS
+          git commit -m "chore(cli): publish binaries for ${GITHUB_REF_NAME} [skip ci]" || echo "no changes"
+          git push origin main
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            bin/ai-track-*
+            bin/SHA256SUMS
