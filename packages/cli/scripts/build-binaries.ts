@@ -23,6 +23,18 @@ for (const { target, asset } of TARGETS) {
     const outfile = path.join(OUT_DIR, asset);
     console.log(`Building ${asset} (${target})...`);
     await $`bun build ${ENTRY} --compile --target=${target} --outfile=${outfile} --external bun:sqlite --external node:sqlite`;
+
+    if (target.startsWith("bun-darwin")) {
+        try {
+            // Strip Bun's embedded (incomplete) signature slot before ad-hoc
+            // signing, or codesign rejects it with "invalid or unsupported format".
+            await $`codesign --remove-signature ${outfile}`.quiet().nothrow();
+            await $`codesign --sign - --force ${outfile}`.quiet();
+            console.log(`  ad-hoc signed ${asset}`);
+        } catch {
+            console.log(`  (codesign unavailable — ${asset} will be signed by the installer)`);
+        }
+    }
 }
 
 console.log(`\nDone. Binaries written to ${OUT_DIR}`);

@@ -52,6 +52,19 @@ fi
 
 chmod +x "$tmp"
 mv "$tmp" "$target"
+
+if [ "$plat" = "darwin" ]; then
+  if command -v codesign >/dev/null 2>&1; then
+    # Bun --compile embeds an incomplete signature slot that codesign refuses
+    # to overwrite ("invalid or unsupported format"), so strip it first, then
+    # apply a fresh ad-hoc signature.
+    codesign --remove-signature "$target" 2>/dev/null || true
+    codesign --sign - --force "$target" 2>/dev/null \
+      && say "Ad-hoc signed binary (required to run on Apple Silicon)" \
+      || warn "Could not ad-hoc sign — binary may be killed on Apple Silicon."
+  fi
+  xattr -d com.apple.quarantine "$target" 2>/dev/null || true
+fi
 say "Installed binary: $target"
 
 # ─── Ensure it's on PATH ────────────────────────────────────
