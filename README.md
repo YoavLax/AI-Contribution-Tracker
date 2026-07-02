@@ -27,12 +27,12 @@ A single self-contained binary. No Node, no npm — everything is bundled.
 
 **macOS / Linux**
 ```bash
-curl -sSL https://raw.githubusercontent.com/YoavLax/AI-Contribution-Tracker/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/Varonis-Systems/AI-Contribution-Tracker/master/install.sh | bash
 ```
 
 **Windows (PowerShell)**
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/YoavLax/AI-Contribution-Tracker/main/install.ps1 | iex"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Varonis-Systems/AI-Contribution-Tracker/master/install.ps1 | iex"
 ```
 
 The installer downloads the `ai-track` binary, adds it to your `PATH`, runs `ai-track init`, and (if the `code` CLI is available) installs the VS Code companion extension for inline-suggestion tracking. From then on every AI-assisted commit is tagged automatically — no per-repo setup.

@@ -1,6 +1,6 @@
 # AI Contribution Tracker — one-line installer (Windows)
 #
-#   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/YoavLax/AI-Contribution-Tracker/main/install.ps1 | iex"
+#   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Varonis-Systems/AI-Contribution-Tracker/master/install.ps1 | iex"
 #
 # Downloads the self-contained ai-track.exe, installs it to
 # %LOCALAPPDATA%\ai-track\bin, adds it to PATH, and runs `ai-track init`.
@@ -9,7 +9,7 @@
 $ErrorActionPreference = 'Stop'
 
 # Binaries are attached to the latest GitHub Release. Override for forks/testing.
-$AssetBase  = if ($env:AI_TRACK_ASSET_BASE) { $env:AI_TRACK_ASSET_BASE } else { 'https://github.com/YoavLax/AI-Contribution-Tracker/releases/latest/download' }
+$AssetBase  = if ($env:AI_TRACK_ASSET_BASE) { $env:AI_TRACK_ASSET_BASE } else { 'https://github.com/Varonis-Systems/AI-Contribution-Tracker/releases/latest/download' }
 $InstallDir = Join-Path $env:LOCALAPPDATA 'ai-track\bin'
 $BinName    = 'ai-track.exe'
 
