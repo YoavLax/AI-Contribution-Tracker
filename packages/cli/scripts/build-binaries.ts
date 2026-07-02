@@ -1,6 +1,6 @@
 /**
  * Cross-compile the `ai-track` binary for all supported platforms using Bun.
- * Output goes to ../../bin/ so binaries can be published via GitHub raw hosting.
+ * Output goes to ../../bin/; CI attaches these to the GitHub Release.
  *
  * Run with: bun run scripts/build-binaries.ts
  */

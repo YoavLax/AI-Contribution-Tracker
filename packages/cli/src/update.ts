@@ -6,11 +6,11 @@ import * as fs from "fs";
 import * as path from "path";
 import { binDir, binaryName, ok, warn, fail } from "./paths.ts";
 
-// GitHub raw hosting base. Binaries are published under bin/<asset> on the
-// default branch. Override with AI_TRACK_RAW_BASE for testing/forks.
-const RAW_BASE =
-    process.env.AI_TRACK_RAW_BASE ||
-    "https://raw.githubusercontent.com/YoavLax/AI-Contribution-Tracker/main/bin";
+// GitHub Release assets. Binaries are attached to the latest release.
+// Override with AI_TRACK_ASSET_BASE for testing/forks.
+const ASSET_BASE =
+    process.env.AI_TRACK_ASSET_BASE ||
+    "https://github.com/YoavLax/AI-Contribution-Tracker/releases/latest/download";
 
 function assetName(): string {
     const arch = process.arch === "arm64" ? "arm64" : "x64";
@@ -21,7 +21,7 @@ function assetName(): string {
 
 export async function runUpdate(): Promise<void> {
     console.log("\nAI Contribution Tracker (ai-track) \u2014 Updating...\n");
-    const url = `${RAW_BASE}/${assetName()}`;
+    const url = `${ASSET_BASE}/${assetName()}`;
     console.log(`Downloading: ${url}`);
 
     try {

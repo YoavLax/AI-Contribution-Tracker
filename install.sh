@@ -7,7 +7,8 @@
 # to ~/.local/bin, and runs `ai-track init`. No Node, no npm, no VS Code required.
 set -euo pipefail
 
-RAW_BASE="${AI_TRACK_RAW_BASE:-https://raw.githubusercontent.com/YoavLax/AI-Contribution-Tracker/main/bin}"
+# Binaries are attached to the latest GitHub Release. Override for forks/testing.
+ASSET_BASE="${AI_TRACK_ASSET_BASE:-https://github.com/YoavLax/AI-Contribution-Tracker/releases/latest/download}"
 INSTALL_DIR="${AI_TRACK_INSTALL_DIR:-$HOME/.local/bin}"
 BIN_NAME="ai-track"
 
@@ -30,7 +31,7 @@ case "$arch" in
 esac
 
 asset="ai-track-${plat}-${a}"
-url="${RAW_BASE}/${asset}"
+url="${ASSET_BASE}/${asset}"
 
 echo ""
 echo "AI Contribution Tracker — installing ${asset}"

@@ -291,7 +291,7 @@ bun test                       # core + git-integration tests
 bun run build:bin              # cross-compile binaries for all platforms → ../../bin
 ```
 
-Binaries are published to `bin/` (served via GitHub raw) and a GitHub Release by [`.github/workflows/release-cli.yml`](.github/workflows/release-cli.yml) on a `cli-v*` tag.
+Binaries are attached to a **GitHub Release** by [`.github/workflows/release-cli.yml`](.github/workflows/release-cli.yml) on a `cli-v*` tag; the install scripts and `ai-track update` download them from `releases/latest/download`.
 
 ---
 

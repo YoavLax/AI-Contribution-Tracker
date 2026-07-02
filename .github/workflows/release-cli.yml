@@ -1,8 +1,8 @@
 name: Build & Publish ai-track CLI
 
 # Bun can cross-compile every target from a single runner, so one job produces
-# all platform binaries. On a version tag they are committed to bin/ (served via
-# GitHub raw) and also attached to a GitHub Release.
+# all platform binaries. On a version tag they are attached to a GitHub Release,
+# which the install scripts and `ai-track update` download from.
 on:
   push:
     tags:
@@ -43,17 +43,6 @@ jobs:
           cd bin
           sha256sum ai-track-* > SHA256SUMS
           cat SHA256SUMS
-
-      - name: Commit binaries to bin/ (raw hosting)
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout main
-          cp bin/ai-track-* bin/SHA256SUMS "$RUNNER_TEMP/" 2>/dev/null || true
-          git add bin/ai-track-* bin/SHA256SUMS
-          git commit -m "chore(cli): publish binaries for ${GITHUB_REF_NAME} [skip ci]" || echo "no changes"
-          git push origin main
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')

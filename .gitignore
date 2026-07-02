@@ -18,3 +18,6 @@ packages/opencode-plugin/*.js
 packages/opencode-plugin/*.js.map
 !packages/opencode-plugin/cli.js
 .sisyphus/
+
+# ai-track CLI binary build output (published as GitHub Release assets)
+/bin/

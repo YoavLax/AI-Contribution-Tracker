@@ -8,7 +8,8 @@
 
 $ErrorActionPreference = 'Stop'
 
-$RawBase    = if ($env:AI_TRACK_RAW_BASE) { $env:AI_TRACK_RAW_BASE } else { 'https://raw.githubusercontent.com/YoavLax/AI-Contribution-Tracker/main/bin' }
+# Binaries are attached to the latest GitHub Release. Override for forks/testing.
+$AssetBase  = if ($env:AI_TRACK_ASSET_BASE) { $env:AI_TRACK_ASSET_BASE } else { 'https://github.com/YoavLax/AI-Contribution-Tracker/releases/latest/download' }
 $InstallDir = Join-Path $env:LOCALAPPDATA 'ai-track\bin'
 $BinName    = 'ai-track.exe'
 
@@ -19,7 +20,7 @@ function Die  ($m) { Write-Host "  $([char]0x2717) $m" -ForegroundColor Red; exi
 # ─── Detect architecture ────────────────────────────────────
 $arch = if ([System.Environment]::Is64BitOperatingSystem) { 'x64' } else { Die 'Only 64-bit Windows is supported' }
 $asset = "ai-track-win-$arch.exe"
-$url   = "$RawBase/$asset"
+$url   = "$AssetBase/$asset"
 
 Write-Host ''
 Write-Host "AI Contribution Tracker — installing $asset"
