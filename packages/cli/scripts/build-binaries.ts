@@ -23,6 +23,19 @@ for (const { target, asset } of TARGETS) {
     const outfile = path.join(OUT_DIR, asset);
     console.log(`Building ${asset} (${target})...`);
     await $`bun build ${ENTRY} --compile --target=${target} --outfile=${outfile} --external bun:sqlite --external node:sqlite`;
+
+    // Ad-hoc sign darwin binaries so Apple Silicon will exec them (arm64
+    // SIGKILLs unsigned Mach-O). Only possible on a macOS runner; the current
+    // Linux CI has no `codesign`, so the installer signs on the user's Mac as
+    // the fallback. Best-effort: never fail the build on a non-mac runner.
+    if (target.startsWith("bun-darwin")) {
+        try {
+            await $`codesign --sign - --force ${outfile}`.quiet();
+            console.log(`  ad-hoc signed ${asset}`);
+        } catch {
+            console.log(`  (codesign unavailable — ${asset} will be signed by the installer)`);
+        }
+    }
 }
 
 console.log(`\nDone. Binaries written to ${OUT_DIR}`);

@@ -52,6 +52,21 @@ fi
 
 chmod +x "$tmp"
 mv "$tmp" "$target"
+
+# ─── macOS: make the binary runnable ────────────────────────
+# Apple Silicon requires every Mach-O to carry at least an ad-hoc code
+# signature or the kernel SIGKILLs it on exec ("Killed: 9"). A curl-
+# downloaded Bun binary is unsigned, so ad-hoc sign it here. Also clear the
+# quarantine flag Gatekeeper sets on downloaded files. Both are free and need
+# no Apple Developer account (that's only required for Homebrew/App Store).
+if [ "$plat" = "darwin" ]; then
+  if command -v codesign >/dev/null 2>&1; then
+    codesign --sign - --force "$target" 2>/dev/null \
+      && say "Ad-hoc signed binary (required to run on Apple Silicon)" \
+      || warn "Could not ad-hoc sign — binary may be killed on Apple Silicon."
+  fi
+  xattr -d com.apple.quarantine "$target" 2>/dev/null || true
+fi
 say "Installed binary: $target"
 
 # ─── Ensure it's on PATH ────────────────────────────────────
