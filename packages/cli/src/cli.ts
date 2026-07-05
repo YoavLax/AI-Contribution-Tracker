@@ -12,7 +12,7 @@ import { runStatus } from "./status.ts";
 import { runRemove } from "./remove.ts";
 import { runUpdate } from "./update.ts";
 
-const VERSION = "0.1.5";
+const VERSION = "0.1.6";
 
 function printUsage(unknown?: string): void {
     if (unknown) { console.error(`Unknown command: ${unknown}\n`); }
