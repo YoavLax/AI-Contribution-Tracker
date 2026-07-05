@@ -672,8 +672,19 @@ export function deriveClaudeTranscriptPath(sessionId: string, cwd?: string): str
  *   (no reasoning field in Claude Code today)  → reasoningTokens = 0
  *
  * Returns same shape as extractFromCliTranscript for drop-in use.
+ *
+ * IMPORTANT — per-commit scoping:
+ * Unlike Copilot CLI (one transcript file per session lifecycle, terminated by a single
+ * session.shutdown), a Claude Code session can be `--resume`d across many separate
+ * invocations spanning multiple commits or even days, all appended to the SAME
+ * <sessionId>.jsonl file. If we summed the whole file unconditionally on every call,
+ * every commit within a resumed session would re-report the FULL cumulative session
+ * total (including turns already attributed to earlier commits) instead of just the
+ * turns since the last commit. `afterMs` (typically `state.stateCreatedAt`, reset by
+ * `resetStateAfterCommit`) scopes extraction the same way `queryTokensFromOtel` scopes
+ * its SQL query, so only turns that happened after the last commit are counted.
  */
-export function extractFromClaudeTranscript(sessionId: string, transcriptPath?: string): {
+export function extractFromClaudeTranscript(sessionId: string, transcriptPath?: string, afterMs?: number): {
     models: string[];
     tokensByModel: Record<string, TokenTotals>;
 } {
@@ -694,6 +705,14 @@ export function extractFromClaudeTranscript(sessionId: string, transcriptPath?: 
                 const entry = JSON.parse(line);
                 // Only process assistant turns
                 if (entry.type !== 'assistant') { continue; }
+
+                // Skip turns already accounted for by a previous commit. Claude Code
+                // transcript lines carry a top-level ISO `timestamp` field.
+                if (afterMs !== undefined && typeof entry.timestamp === 'string') {
+                    const entryMs = new Date(entry.timestamp).getTime();
+                    if (!isNaN(entryMs) && entryMs <= afterMs) { continue; }
+                }
+
                 const msg = entry.message;
                 if (!msg) { continue; }
 
@@ -1091,11 +1110,12 @@ export function handleSessionStart(input: HookInput, gitDir: string): void {
         }
     }
     // Normalize source:
-    //   Copilot CLI reports "new"         → "copilot"
-    //   Claude Code reports "startup" or entrypoint "claude-vscode" → "claude"
+    //   Copilot CLI reports "new"                                    → "copilot"
+    //   Claude Code reports "startup", "resume", or entrypoint "claude-vscode" → "claude"
+    //   ("resume" is sent when a prior Claude Code session is continued with --resume/--continue)
     const rawSource = input.source || '';
     const source = rawSource === 'new' ? 'copilot'
-        : (rawSource === 'startup' || rawSource === 'claude-vscode') ? 'claude'
+        : (rawSource === 'startup' || rawSource === 'resume' || rawSource === 'claude-vscode') ? 'claude'
         : rawSource || undefined;
     if (source) {
         const sanitized = stripInvisibleChars(source);
@@ -1113,11 +1133,12 @@ export function handleSessionStart(input: HookInput, gitDir: string): void {
 export function handleUserPromptSubmit(input: HookInput, gitDir: string): void {
     const state = loadState(gitDir);
     // Normalize source:
-    //   Copilot CLI reports "new"         → "copilot"
-    //   Claude Code reports "startup" or entrypoint "claude-vscode" → "claude"
+    //   Copilot CLI reports "new"                                    → "copilot"
+    //   Claude Code reports "startup", "resume", or entrypoint "claude-vscode" → "claude"
+    //   ("resume" is sent when a prior Claude Code session is continued with --resume/--continue)
     const rawSource = input.source || '';
     const source = rawSource === 'new' ? 'copilot'
-        : (rawSource === 'startup' || rawSource === 'claude-vscode') ? 'claude'
+        : (rawSource === 'startup' || rawSource === 'resume' || rawSource === 'claude-vscode') ? 'claude'
         : rawSource || undefined;
     // Only count as user prompt if:
     // 1. No subagent is currently active (VS Code fires UserPromptSubmit for subagent-delegated prompts too)
@@ -1194,7 +1215,8 @@ export function handleStop(input: HookInput, gitDir: string): void {
     //   Claude schema:  type:"assistant" (not "assistant.message")
     if (sessionId) {
         const claudePath = input.transcript_path || state.sessionTranscripts[sessionId] || '';
-        const claudeData = extractFromClaudeTranscript(sessionId, claudePath || undefined);
+        const afterMs = new Date(state.stateCreatedAt).getTime();
+        const claudeData = extractFromClaudeTranscript(sessionId, claudePath || undefined, afterMs);
         for (const m of claudeData.models) {
             if (!state.models.includes(m)) { state.models.push(m); }
         }
@@ -1439,9 +1461,10 @@ export function handleCommitMsg(input: HookInput, gitDir: string): void {
 
     // Extract model/tokens from Claude Code transcripts (per-turn, no race condition)
     // Use persisted transcript paths (set at SessionStart/Stop) or search ~/.claude/projects/
+    const claudeAfterMs = new Date(state.stateCreatedAt).getTime();
     for (const sid of transcriptSessionIds) {
         const claudePath = state.sessionTranscripts[sid] || '';
-        const claudeData = extractFromClaudeTranscript(sid, claudePath || undefined);
+        const claudeData = extractFromClaudeTranscript(sid, claudePath || undefined, claudeAfterMs);
         for (const m of claudeData.models) {
             if (!state.models.includes(m)) { state.models.push(m); stateChanged = true; }
         }
