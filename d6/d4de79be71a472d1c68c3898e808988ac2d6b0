@@ -1,0 +1,19 @@
+src/hook-handler.ts
+  s_bc4b6d2c5747e1::t_1ac028d6960eea 675-685,687,708-715,1113-1115,1118,1136-1138,1141,1218-1219,1464,1467
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d6d4de79be71a472d1c68c3898e808988ac2d6b0",
+  "prompts": {},
+  "sessions": {
+    "s_bc4b6d2c5747e1": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "c50e02ac-4bd9-44fc-9600-a697d744f6e8",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Yoav Lax <ylax@varonis.com>"
+    }
+  }
+}
